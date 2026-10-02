@@ -1,0 +1,267 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:report-designer:block:v1",
+  "title": "Business Lego Block",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "schemaVersion": {
+      "const": 1
+    },
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 100
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 100
+    },
+    "rows": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 200
+    },
+    "cols": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 50
+    },
+    "cells": {
+      "type": "array",
+      "maxItems": 10000,
+      "items": {
+        "$ref": "#/$defs/cell"
+      }
+    },
+    "merges": {
+      "type": "array",
+      "maxItems": 10000,
+      "items": {
+        "$ref": "#/$defs/rect"
+      }
+    },
+    "defaultStyle": {
+      "$ref": "#/$defs/style"
+    },
+    "repeat": {
+      "$ref": "#/$defs/repeat"
+    }
+  },
+  "required": [
+    "schemaVersion",
+    "id",
+    "name",
+    "rows",
+    "cols",
+    "cells",
+    "merges"
+  ],
+  "$defs": {
+    "color": {
+      "type": "string",
+      "pattern": "^#[0-9a-fA-F]{6}$"
+    },
+    "edge": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "style": {
+          "enum": [
+            "thin",
+            "medium",
+            "dashed"
+          ]
+        },
+        "color": {
+          "$ref": "#/$defs/color"
+        }
+      },
+      "required": [
+        "style",
+        "color"
+      ]
+    },
+    "style": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "fontFamily": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "fontSizePt": {
+          "type": "number",
+          "minimum": 6,
+          "maximum": 72
+        },
+        "bold": {
+          "type": "boolean"
+        },
+        "color": {
+          "$ref": "#/$defs/color"
+        },
+        "background": {
+          "$ref": "#/$defs/color"
+        },
+        "horizontal": {
+          "enum": [
+            "left",
+            "center",
+            "right"
+          ]
+        },
+        "vertical": {
+          "enum": [
+            "top",
+            "middle",
+            "bottom"
+          ]
+        },
+        "wrap": {
+          "type": "boolean"
+        },
+        "borders": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "top": {
+              "$ref": "#/$defs/edge"
+            },
+            "right": {
+              "$ref": "#/$defs/edge"
+            },
+            "bottom": {
+              "$ref": "#/$defs/edge"
+            },
+            "left": {
+              "$ref": "#/$defs/edge"
+            }
+          }
+        }
+      }
+    },
+    "rect": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "r": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "c": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "rows": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "cols": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "required": [
+        "r",
+        "c",
+        "rows",
+        "cols"
+      ]
+    },
+    "binding": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "path": {
+          "type": "string",
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*(\\.[A-Za-z_][A-Za-z0-9_]*)*$"
+        },
+        "format": {
+          "enum": [
+            "text",
+            "number",
+            "date"
+          ]
+        }
+      },
+      "required": [
+        "path",
+        "format"
+      ]
+    },
+    "cell": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "r": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "c": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "text": {
+          "type": "string",
+          "maxLength": 32767
+        },
+        "binding": {
+          "$ref": "#/$defs/binding"
+        },
+        "style": {
+          "$ref": "#/$defs/style"
+        }
+      },
+      "required": [
+        "r",
+        "c"
+      ],
+      "not": {
+        "properties": { "text": {}, "binding": {} },
+        "required": [
+          "text",
+          "binding"
+        ]
+      }
+    },
+    "repeat": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "source": {
+          "type": "string",
+          "enum": [
+            "items"
+          ]
+        },
+        "rowOffset": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "rowCount": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "mode": {
+          "const": "insert"
+        },
+        "empty": {
+          "enum": [
+            "remove",
+            "keep"
+          ]
+        }
+      },
+      "required": [
+        "source",
+        "rowOffset",
+        "rowCount",
+        "mode",
+        "empty"
+      ]
+    }
+  }
+}

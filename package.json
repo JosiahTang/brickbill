@@ -1,0 +1,45 @@
+{
+  "name": "web-report-template-designer",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.6.0"
+  },
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "build": "vue-tsc --noEmit && vite build",
+    "preview": "vite preview --host 127.0.0.1",
+    "test": "node --experimental-strip-types --test tests/domain.test.mjs tests/demo.test.mjs tests/workflow.test.mjs tests/reporting-core.test.mjs tests/template-pagination.test.mjs tests/flow-pagination.test.mjs tests/template-package.test.mjs tests/reporting-projects.test.mjs",
+    "test:excel": "node --experimental-strip-types --test tests/excel.test.mjs",
+    "test:pdf": "node --experimental-strip-types --test tests/pdf.test.mjs",
+    "test:schema": "node --experimental-strip-types --test tests/schema.test.mjs",
+    "start": "node scripts/start.mjs",
+    "build:offline-preview": "node scripts/build-offline-preview.mjs",
+    "serve:dist": "node scripts/serve-static.mjs --root dist",
+    "serve:offline-preview": "node scripts/serve-static.mjs --root preview",
+    "serve:api": "node --experimental-strip-types server/main.ts",
+    "seed:examples": "node --experimental-strip-types scripts/seed-examples.mjs",
+    "benchmark:reporting": "node --experimental-strip-types scripts/benchmark-reporting.mjs",
+    "test:api": "node --experimental-strip-types --test tests/server.test.mjs",
+    "test:host": "node --experimental-strip-types --test tests/host.test.mjs",
+    "verify": "npm test && npm run test:schema && npm run test:excel && npm run test:pdf && npm run test:api && npm run test:host && npm run build"
+  },
+  "dependencies": {
+    "@univerjs/core": "1.0.3",
+    "@univerjs/presets": "1.0.3",
+    "@univerjs/preset-sheets-core": "1.0.3",
+    "@univerjs/sheets": "1.0.3",
+    "vue": "^3.5.13",
+    "pinia": "^3.0.1",
+    "element-plus": "^2.9.5",
+    "exceljs": "4.4.0",
+    "ajv": "^8.17.1"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^5.2.1",
+    "vite": "^6.1.0",
+    "typescript": "~5.7.3",
+    "vue-tsc": "^2.2.4"
+  }
+}

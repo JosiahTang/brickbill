@@ -1,0 +1,16 @@
+{
+  "version": "0.1.1",
+  "packagingDate": "2026-09-30",
+  "originalArchiveSHA256": "d2189bc9b27ddd56e3b4694131bd14c04efa2bc8dc651812a3b8adbff80ce710",
+  "originalFilePathsPreserved": 28,
+  "missingOriginalFilePaths": [],
+  "fullAppDependencyInstall": "not completed",
+  "fullAppBuild": "blocked: dependencies absent",
+  "siteDeployment": "not performed: no Site publishing interface",
+  "offlinePreview": "self-contained HTML-grid UI; not a Vue/Univer build",
+  "testResults": {
+    "domain": 46,
+    "offlinePreviewChromium": 23,
+    "localStaticServer": 6
+  }
+}

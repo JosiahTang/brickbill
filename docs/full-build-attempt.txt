@@ -1,0 +1,5 @@
+
+> web-report-template-designer@0.1.1 build
+> vue-tsc --noEmit && vite build
+
+sh: 1: vue-tsc: not found

@@ -1,0 +1,3 @@
+PASS: JSON Schema Draft 2020-12 schema syntax
+PASS: customer-block.example.json against block.schema.json
+Validated using Python jsonschema; Ajv JS tests have NOT been run.

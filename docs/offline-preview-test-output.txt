@@ -1,0 +1,101 @@
+{
+  "runner": "Playwright Python + system Chromium",
+  "entry": "preview/index.html loaded via Playwright set_content (file navigation blocked by container policy)",
+  "results": [
+    {
+      "name": "Initial example has 4 blocks and 10 bindings",
+      "passed": true
+    },
+    {
+      "name": "Customer placeholder rendered",
+      "passed": true
+    },
+    {
+      "name": "Title merge rendered",
+      "passed": true
+    },
+    {
+      "name": "HTML5 block drop commits",
+      "passed": true
+    },
+    {
+      "name": "Occupied region rejects overwriting",
+      "passed": true
+    },
+    {
+      "name": "Undo restores previous document",
+      "passed": true
+    },
+    {
+      "name": "Redo restores block",
+      "passed": true
+    },
+    {
+      "name": "Field drop generates placeholder",
+      "passed": true
+    },
+    {
+      "name": "Collection field rejected outside repeat area",
+      "passed": true
+    },
+    {
+      "name": "Explicit field replacement",
+      "passed": true
+    },
+    {
+      "name": "Shift selection merges cells",
+      "passed": true
+    },
+    {
+      "name": "Background property applied",
+      "passed": true
+    },
+    {
+      "name": "Row dimensions applied",
+      "passed": true
+    },
+    {
+      "name": "Unmerge restores separate cells",
+      "passed": true
+    },
+    {
+      "name": "Out-of-bounds drop rolls back",
+      "passed": true
+    },
+    {
+      "name": "JSON download contains validated model and metadata",
+      "passed": true
+    },
+    {
+      "name": "Whole-block drag preserves edited binding",
+      "passed": true
+    },
+    {
+      "name": "Undo restores moved block",
+      "passed": true
+    },
+    {
+      "name": "Invalid dimensions reject without mutation",
+      "passed": true
+    },
+    {
+      "name": "New blank document is undoable",
+      "passed": true
+    },
+    {
+      "name": "Undo new document restores design",
+      "passed": true
+    },
+    {
+      "name": "No external network requests",
+      "passed": true
+    },
+    {
+      "name": "No browser page errors",
+      "passed": true
+    }
+  ],
+  "passed": 23,
+  "pageErrors": [],
+  "externalRequests": []
+}

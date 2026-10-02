@@ -1,0 +1,26 @@
+[
+  {
+    "name": "GET / returns preview HTML",
+    "passed": true
+  },
+  {
+    "name": "HEAD / returns 200",
+    "passed": true
+  },
+  {
+    "name": "GET /../package.json returns 403",
+    "passed": true
+  },
+  {
+    "name": "GET /%2e%2e/package.json returns 403",
+    "passed": true
+  },
+  {
+    "name": "POST / returns 405",
+    "passed": true
+  },
+  {
+    "name": "GET /missing returns 404",
+    "passed": true
+  }
+]

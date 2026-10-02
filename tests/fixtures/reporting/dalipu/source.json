@@ -1,0 +1,60 @@
+{
+  "contractVersion": 2,
+  "projectId": "dalipu-demo",
+  "documentType": "qualityCertificate",
+  "businessKey": { "printNo": "DEMO-CERT-001", "productPart": "T" },
+  "sourceVersion": "dalipu-sample-v1",
+  "collectedAt": "2026-10-01T08:00:00.000Z",
+  "datasets": [
+    {
+      "datasetId": "header_by_print_no",
+      "records": [{
+        "CERTI_PRINT_NO": "DEMO-CERT-001", "TUBE_COUP_FLAG": "T", "SALE_ORDER_SUB_NO": "SO-DEMO-1001",
+        "CERTI_NO": "DLP-DEMO-1001", "ORD_CUST_NAME": "演示客户甲", "purchaser": "演示采购单位",
+        "productDescription": "无缝套管 Casing", "specification": "Φ139.7 × 7.72", "P_O_NO": "PO-DEMO-01",
+        "contractNo": "SO-DEMO-1001", "internalReference": "MILL-DEMO-77", "issueDate": "2026-09-28",
+        "MAKE_METHOD": "热轧无缝", "deliveryConditions": "淬火加回火 Quenched and Tempered"
+      }]
+    },
+    { "datasetId": "contract_by_sub_order", "records": [{ "saleOrderSubNo": "SO-DEMO-1001", "orderNo": "SO-DEMO-1001", "standard": "API 5CT", "heatTreatment": "Q&T" }] },
+    {
+      "datasetId": "material_lines",
+      "records": [
+        { "CERTI_PRINT_NO": "DEMO-CERT-001", "TUBE_COUP_FLAG": "T", "lineId": "LINE-01", "HEAT_NO": "2512865", "SAMPLE_LOT_NO": "25706099", "MAT_NUM": 5, "TOTAL_LEN": 58.38, "weight": 3.531, "deliveryBundle": 19 },
+        { "CERTI_PRINT_NO": "DEMO-CERT-001", "TUBE_COUP_FLAG": "T", "lineId": "LINE-02", "HEAT_NO": "2512867", "SAMPLE_LOT_NO": "25706095", "MAT_NUM": 6, "TOTAL_LEN": 70.75, "weight": 4.244, "deliveryBundle": 20 }
+      ]
+    },
+    {
+      "datasetId": "chemistry_rows",
+      "records": [
+        { "printNo": "DEMO-CERT-001", "partFlag": "T", "heatNo": "2512865", "lotNo": "25706099", "analysisId": "C-001-R", "analysisType": "R", "sampleId": "CS-01", "sequenceNo": 1, "C": 0.26, "Si": 0.21, "Mn": 0.64, "P": 0.86, "S": 0.17, "Cr": 0.97, "Ni": 0.34, "Cu": 0.50, "Mo": 63, "Al": 14, "Nb": 5 },
+        { "printNo": "DEMO-CERT-001", "partFlag": "T", "heatNo": "2512865", "lotNo": "25706099", "analysisId": "C-001-C", "analysisType": "C", "sampleId": "CS-02", "sequenceNo": 2, "C": 0.25, "Si": 0.19, "Mn": 0.65, "P": 0.88, "S": 0.14, "Cr": 0.99, "Ni": 0.36, "Cu": 0.56, "Mo": 150, "Al": 16, "Nb": 7 },
+        { "printNo": "DEMO-CERT-001", "partFlag": "T", "heatNo": "2512867", "lotNo": "25706095", "analysisId": "C-002-R", "analysisType": "R", "sampleId": "CS-03", "sequenceNo": 1, "C": 0.24, "Si": 0.21, "Mn": 0.64, "P": 0.82, "S": 0.17, "Cr": 0.97, "Ni": 0.36, "Cu": 0.53, "Mo": 100, "Al": 20, "Nb": 6 }
+      ]
+    },
+    {
+      "datasetId": "mechanical_rows",
+      "records": [
+        { "printNo": "DEMO-CERT-001", "partFlag": "T", "heatNo": "2512865", "lotNo": "25706099", "resultId": "M-001-T", "sampleId": "TS-01", "sequenceNo": 1, "testType": "TENSILE", "direction": "L", "YS_TC": 627, "TS_TC": 731, "YIELD_RATE_TC": 0.86, "EL_TC": 30, "impactEnergy1": 87, "impactEnergy2": 85, "impactEnergy3": 86, "impactEnergyAverage": 86 },
+        { "printNo": "DEMO-CERT-001", "partFlag": "T", "heatNo": "2512865", "lotNo": "25706099", "resultId": "M-001-I", "sampleId": "IS-01", "sequenceNo": 2, "testType": "IMPACT", "direction": "T", "yieldStrength": null, "tensileStrength": null, "yieldRatio": null, "elongation": null, "impactEnergy1": 86, "impactEnergy2": 86, "impactEnergy3": 85, "impactEnergyAverage": 86 },
+        { "printNo": "DEMO-CERT-001", "partFlag": "T", "heatNo": "2512867", "lotNo": "25706095", "resultId": "M-002-T", "sampleId": "TS-02", "sequenceNo": 1, "testType": "TENSILE", "direction": "L", "YS_TC": 618, "TS_TC": 720, "YIELD_RATE_TC": 0.85, "EL_TC": 32, "impactEnergy1": 88, "impactEnergy2": 89, "impactEnergy3": 89, "impactEnergyAverage": 89 }
+      ]
+    },
+    {
+      "datasetId": "hardness_points",
+      "records": [
+        { "CERTI_PRINT_NO": "DEMO-CERT-001", "TUBE_COUP_FLAG": "T", "HEAT_NO": "2512865", "SAMPLE_LOT_NO": "25706099", "sampleId": "HS-01", "sequenceNo": "1", "hardType": "HRC", "quadrant": "1", "position": "OUT", "spotNo": "1", "value": 19.5, "isApproved": true },
+        { "CERTI_PRINT_NO": "DEMO-CERT-001", "TUBE_COUP_FLAG": "T", "HEAT_NO": "2512865", "SAMPLE_LOT_NO": "25706099", "sampleId": "HS-01", "sequenceNo": "1", "hardType": "HRC", "quadrant": "1", "position": "OUT", "spotNo": "2", "value": 18.9, "isApproved": true },
+        { "CERTI_PRINT_NO": "DEMO-CERT-001", "TUBE_COUP_FLAG": "T", "HEAT_NO": "2512867", "SAMPLE_LOT_NO": "25706095", "sampleId": "HS-02", "sequenceNo": "1", "hardType": "HRC", "quadrant": "1", "position": "OUT", "spotNo": "1", "value": 18.5, "isApproved": true }
+      ]
+    },
+    {
+      "datasetId": "inspection_rows",
+      "records": [
+        { "CERTI_PRINT_NO": "DEMO-CERT-001", "TUBE_COUP_FLAG": "T", "HEAT_NO": "2512865", "SAMPLE_LOT_NO": "25706099", "resultId": "I-001-UT", "itemCode": "UT", "itemName": "无损检测", "method": "超声检测", "result": "合格", "isApproved": true },
+        { "CERTI_PRINT_NO": "DEMO-CERT-001", "TUBE_COUP_FLAG": "T", "HEAT_NO": "2512865", "SAMPLE_LOT_NO": "25706099", "resultId": "I-001-VI", "itemCode": "VI", "itemName": "外观检验", "method": "目视检验", "result": "合格", "isApproved": true },
+        { "CERTI_PRINT_NO": "DEMO-CERT-001", "TUBE_COUP_FLAG": "T", "HEAT_NO": "2512867", "SAMPLE_LOT_NO": "25706095", "resultId": "I-002-UT", "itemCode": "UT", "itemName": "无损检测", "method": "超声检测", "result": "合格", "isApproved": true }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,83 @@
+{
+  "schemaVersion": 1,
+  "templateId": "order-template",
+  "revision": 1,
+  "syntax": "mustache",
+  "sheetName": "单据",
+  "bindings": [
+    {
+      "address": "B3",
+      "path": "customer.name",
+      "format": "text",
+      "placeholder": "{{customer.name}}"
+    },
+    {
+      "address": "D3",
+      "path": "orderNo",
+      "format": "text",
+      "placeholder": "{{orderNo}}"
+    },
+    {
+      "address": "B4",
+      "path": "customer.contact",
+      "format": "text",
+      "placeholder": "{{customer.contact}}"
+    },
+    {
+      "address": "D4",
+      "path": "customer.phone",
+      "format": "text",
+      "placeholder": "{{customer.phone}}"
+    },
+    {
+      "address": "A7",
+      "path": "items.name",
+      "format": "text",
+      "placeholder": "{{items.name}}"
+    },
+    {
+      "address": "B7",
+      "path": "items.quantity",
+      "format": "number",
+      "placeholder": "{{items.quantity}}"
+    },
+    {
+      "address": "C7",
+      "path": "items.price",
+      "format": "number",
+      "placeholder": "{{items.price}}"
+    },
+    {
+      "address": "D7",
+      "path": "items.amount",
+      "format": "number",
+      "placeholder": "{{items.amount}}"
+    },
+    {
+      "address": "B9",
+      "path": "totalAmount",
+      "format": "number",
+      "placeholder": "{{totalAmount}}"
+    },
+    {
+      "address": "D9",
+      "path": "approver.name",
+      "format": "text",
+      "placeholder": "{{approver.name}}"
+    }
+  ],
+  "repeats": [
+    {
+      "blockId": "items-1",
+      "source": "items",
+      "r": 6,
+      "c": 0,
+      "rows": 1,
+      "cols": 4,
+      "coordinateBase": 0,
+      "axis": "row",
+      "mode": "insert",
+      "empty": "remove"
+    }
+  ]
+}

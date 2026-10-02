@@ -1,0 +1,294 @@
+
+> web-report-template-designer@0.1.1 test
+> node --experimental-strip-types --test tests/domain.test.mjs tests/demo.test.mjs
+
+TAP version 13
+# (node:1084) ExperimentalWarning: Type Stripping is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: example uses valid blocks, merges and the intended detail band
+ok 1 - example uses valid blocks, merges and the intended detail band
+  ---
+  duration_ms: 5.660081
+  type: 'test'
+  ...
+# Subtest: example factories do not share mutable objects
+ok 2 - example factories do not share mutable objects
+  ---
+  duration_ms: 1.67353
+  type: 'test'
+  ...
+# (node:1085) ExperimentalWarning: Type Stripping is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: all preset definitions are valid
+ok 3 - all preset definitions are valid
+  ---
+  duration_ms: 1.71456
+  type: 'test'
+  ...
+# Subtest: 2x4 block places at absolute coordinates
+ok 4 - 2x4 block places at absolute coordinates
+  ---
+  duration_ms: 1.023633
+  type: 'test'
+  ...
+# Subtest: blank cells reserve the entire block footprint
+ok 5 - blank cells reserve the entire block footprint
+  ---
+  duration_ms: 0.392404
+  type: 'test'
+  ...
+# Subtest: style-only cells block placement
+ok 6 - style-only cells block placement
+  ---
+  duration_ms: 0.501065
+  type: 'test'
+  ...
+# Subtest: invalid placement rejected (-1, 0)
+ok 7 - invalid placement rejected (-1, 0)
+  ---
+  duration_ms: 0.151976
+  type: 'test'
+  ...
+# Subtest: invalid placement rejected (0, -1)
+ok 8 - invalid placement rejected (0, -1)
+  ---
+  duration_ms: 0.099087
+  type: 'test'
+  ...
+# Subtest: invalid placement rejected (59, 0)
+ok 9 - invalid placement rejected (59, 0)
+  ---
+  duration_ms: 0.177675
+  type: 'test'
+  ...
+# Subtest: invalid placement rejected (0, 9)
+ok 10 - invalid placement rejected (0, 9)
+  ---
+  duration_ms: 0.100019
+  type: 'test'
+  ...
+# Subtest: invalid placement rejected (0.5, 0)
+ok 11 - invalid placement rejected (0.5, 0)
+  ---
+  duration_ms: 0.330191
+  type: 'test'
+  ...
+# Subtest: invalid placement rejected (0, NaN)
+ok 12 - invalid placement rejected (0, NaN)
+  ---
+  duration_ms: 0.320016
+  type: 'test'
+  ...
+# Subtest: exact bottom-right placement is accepted
+ok 13 - exact bottom-right placement is accepted
+  ---
+  duration_ms: 0.525592
+  type: 'test'
+  ...
+# Subtest: adjacent blocks do not overlap
+ok 14 - adjacent blocks do not overlap
+  ---
+  duration_ms: 1.2037
+  type: 'test'
+  ...
+# Subtest: instances and source definitions are deep-cloned
+ok 15 - instances and source definitions are deep-cloned
+  ---
+  duration_ms: 0.626702
+  type: 'test'
+  ...
+# Subtest: failed transaction leaves original unchanged
+ok 16 - failed transaction leaves original unchanged
+  ---
+  duration_ms: 0.394437
+  type: 'test'
+  ...
+# Subtest: move preserves edits and removes old occupancy
+ok 17 - move preserves edits and removes old occupancy
+  ---
+  duration_ms: 0.764167
+  type: 'test'
+  ...
+# Subtest: move can partially overlap its own former rectangle
+ok 18 - move can partially overlap its own former rectangle
+  ---
+  duration_ms: 0.297272
+  type: 'test'
+  ...
+# Subtest: failed move rolls back both removal and placement
+ok 19 - failed move rolls back both removal and placement
+  ---
+  duration_ms: 0.474856
+  type: 'test'
+  ...
+# Subtest: missing block move reports meaningful error
+ok 20 - missing block move reports meaningful error
+  ---
+  duration_ms: 0.36989
+  type: 'test'
+  ...
+# Subtest: field drop maps a merged slave to the anchor
+ok 21 - field drop maps a merged slave to the anchor
+  ---
+  duration_ms: 0.29557
+  type: 'test'
+  ...
+# Subtest: dragging a field must not overwrite an existing literal
+ok 22 - dragging a field must not overwrite an existing literal
+  ---
+  duration_ms: 0.337683
+  type: 'test'
+  ...
+# Subtest: explicit property-panel replacement retains cell ownership and style
+ok 23 - explicit property-panel replacement retains cell ownership and style
+  ---
+  duration_ms: 0.370512
+  type: 'test'
+  ...
+# Subtest: literal zero counts as occupied
+ok 24 - literal zero counts as occupied
+  ---
+  duration_ms: 0.159918
+  type: 'test'
+  ...
+# Subtest: unknown field paths are rejected
+ok 25 - unknown field paths are rejected
+  ---
+  duration_ms: 0.238805
+  type: 'test'
+  ...
+# Subtest: raw placeholder bypass is rejected
+ok 26 - raw placeholder bypass is rejected
+  ---
+  duration_ms: 0.190503
+  type: 'test'
+  ...
+# Subtest: list fields outside matching repeat band are rejected
+ok 27 - list fields outside matching repeat band are rejected
+  ---
+  duration_ms: 0.123765
+  type: 'test'
+  ...
+# Subtest: list fields in their repeat band are valid
+ok 28 - list fields in their repeat band are valid
+  ---
+  duration_ms: 0.310932
+  type: 'test'
+  ...
+# Subtest: removing repeat config while list fields exist is rejected
+ok 29 - removing repeat config while list fields exist is rejected
+  ---
+  duration_ms: 0.332655
+  type: 'test'
+  ...
+# Subtest: parallel full-row repeat bands are rejected
+ok 30 - parallel full-row repeat bands are rejected
+  ---
+  duration_ms: 0.562477
+  type: 'test'
+  ...
+# Subtest: sequential repeat bands are accepted
+ok 31 - sequential repeat bands are accepted
+  ---
+  duration_ms: 0.471081
+  type: 'test'
+  ...
+# Subtest: duplicate local coordinates are rejected
+ok 32 - duplicate local coordinates are rejected
+  ---
+  duration_ms: 0.330722
+  type: 'test'
+  ...
+# Subtest: merged slave content is rejected in presets
+ok 33 - merged slave content is rejected in presets
+  ---
+  duration_ms: 0.164494
+  type: 'test'
+  ...
+# Subtest: overlapping merges are rejected
+ok 34 - overlapping merges are rejected
+  ---
+  duration_ms: 0.135151
+  type: 'test'
+  ...
+# Subtest: merge refuses to discard non-anchor values
+ok 35 - merge refuses to discard non-anchor values
+  ---
+  duration_ms: 0.367216
+  type: 'test'
+  ...
+# Subtest: merge cannot cross a block ownership boundary
+ok 36 - merge cannot cross a block ownership boundary
+  ---
+  duration_ms: 0.200067
+  type: 'test'
+  ...
+# Subtest: merge cannot cross repeat band boundary
+ok 37 - merge cannot cross repeat band boundary
+  ---
+  duration_ms: 0.729705
+  type: 'test'
+  ...
+# Subtest: merge normalization has perimeter-only borders and uniform fill
+ok 38 - merge normalization has perimeter-only borders and uniform fill
+  ---
+  duration_ms: 0.3426
+  type: 'test'
+  ...
+# Subtest: deleting block also removes owned merges and cells
+ok 39 - deleting block also removes owned merges and cells
+  ---
+  duration_ms: 0.666552
+  type: 'test'
+  ...
+# Subtest: clearing only part of an independent merge is rejected
+ok 40 - clearing only part of an independent merge is rejected
+  ---
+  duration_ms: 0.205676
+  type: 'test'
+  ...
+# Subtest: clearing independent cells releases placement occupancy
+ok 41 - clearing independent cells releases placement occupancy
+  ---
+  duration_ms: 0.193007
+  type: 'test'
+  ...
+# Subtest: invalid row dimensions are rejected atomically
+ok 42 - invalid row dimensions are rejected atomically
+  ---
+  duration_ms: 0.112718
+  type: 'test'
+  ...
+# Subtest: placeholder syntax and numeric formatting are independent
+ok 43 - placeholder syntax and numeric formatting are independent
+  ---
+  duration_ms: 0.096474
+  type: 'test'
+  ...
+# Subtest: metadata contains explicit repeat coordinates and A1 scalar addresses
+ok 44 - metadata contains explicit repeat coordinates and A1 scalar addresses
+  ---
+  duration_ms: 0.473825
+  type: 'test'
+  ...
+# Subtest: A1 conversion supports columns after Z
+ok 45 - A1 conversion supports columns after Z
+  ---
+  duration_ms: 0.071837
+  type: 'test'
+  ...
+# Subtest: deterministic placement fuzz preserves invariants and rollback
+ok 46 - deterministic placement fuzz preserves invariants and rollback
+  ---
+  duration_ms: 51.494726
+  type: 'test'
+  ...
+1..46
+# tests 46
+# suites 0
+# pass 46
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 195.490257

@@ -1,0 +1,59 @@
+{
+  "contractVersion": 2,
+  "projectId": "general-mes-demo",
+  "documentType": "qualityCertificate",
+  "businessKey": { "certificateRequestId": "MES-DEMO-9001" },
+  "sourceVersion": "generic-mes-sample-v1",
+  "collectedAt": "2026-10-01T08:00:00.000Z",
+  "datasets": [
+    {
+      "datasetId": "order_summary",
+      "records": [{
+        "print_no": "MES-DEMO-9001", "part_flag": "T", "sale_order_sub_no": "MES-SO-9001",
+        "certificate_no": "MES-CERT-9001", "customer": "演示客户乙", "purchaser": "演示采购中心",
+        "product_description": "合金无缝钢管", "specification": "Φ114.3 × 6.02", "customer_po_no": "MES-PO-19",
+        "contract_no": "MES-SO-9001", "internal_reference": "PLANT-DEMO-09", "issue_date": "2026-09-30",
+        "making_method": "热轧无缝", "delivery_conditions": "正火 Normalized"
+      }]
+    },
+    { "datasetId": "order_requirements", "records": [{ "sale_order_sub_no": "MES-SO-9001", "order_no": "MES-SO-9001", "standard": "EN 10216-2", "heat_treatment": "N" }] },
+    {
+      "datasetId": "shipment_coils",
+      "records": [
+        { "print_no": "MES-DEMO-9001", "part_flag": "T", "line_id": "SHIP-901", "heat_no": "G25101", "lot_no": "L9001", "pieces": 3, "length": 42.5, "weight": 1.842, "delivery_bundle": 11 },
+        { "print_no": "MES-DEMO-9001", "part_flag": "T", "line_id": "SHIP-902", "heat_no": "G25102", "lot_no": "L9002", "pieces": 4, "length": 51.25, "weight": 2.217, "delivery_bundle": 12 }
+      ]
+    },
+    {
+      "datasetId": "lab_chemistry",
+      "records": [
+        { "print_no": "MES-DEMO-9001", "part_flag": "T", "heat_no": "G25101", "lot_no": "L9001", "analysis_id": "GC-1", "analysis_type": "R", "sample_id": "GC-S1", "sequence_no": 1, "c": 0.18, "si": 0.24, "mn": 0.71, "p": 0.014, "s": 0.005, "cr": 0.02, "ni": 0.03, "cu": 0.08, "mo": 0.01, "al": 0.025, "nb": 0.002 },
+        { "print_no": "MES-DEMO-9001", "part_flag": "T", "heat_no": "G25101", "lot_no": "L9001", "analysis_id": "GC-2", "analysis_type": "C", "sample_id": "GC-S2", "sequence_no": 2, "c": 0.17, "si": 0.23, "mn": 0.70, "p": 0.013, "s": 0.005, "cr": 0.02, "ni": 0.03, "cu": 0.08, "mo": 0.01, "al": 0.024, "nb": 0.002 },
+        { "print_no": "MES-DEMO-9001", "part_flag": "T", "heat_no": "G25102", "lot_no": "L9002", "analysis_id": "GC-3", "analysis_type": "R", "sample_id": "GC-S3", "sequence_no": 1, "c": 0.19, "si": 0.25, "mn": 0.72, "p": 0.015, "s": 0.006, "cr": 0.02, "ni": 0.03, "cu": 0.09, "mo": 0.01, "al": 0.026, "nb": 0.002 }
+      ]
+    },
+    {
+      "datasetId": "lab_mechanical",
+      "records": [
+        { "print_no": "MES-DEMO-9001", "part_flag": "T", "heat_no": "G25101", "lot_no": "L9001", "result_id": "GM-1", "sample_id": "GT-1", "sequence_no": 1, "test_type": "TENSILE", "direction": "L", "yield_strength": 524, "tensile_strength": 681, "yield_ratio": 0.77, "elongation": 28, "impact_energy1": 112, "impact_energy2": 109, "impact_energy3": 115, "impact_energy_average": 112 },
+        { "print_no": "MES-DEMO-9001", "part_flag": "T", "heat_no": "G25101", "lot_no": "L9001", "result_id": "GM-2", "sample_id": "GI-1", "sequence_no": 2, "test_type": "IMPACT", "direction": "T", "yield_strength": null, "tensile_strength": null, "yield_ratio": null, "elongation": null, "impact_energy1": 111, "impact_energy2": 108, "impact_energy3": 114, "impact_energy_average": 111 },
+        { "print_no": "MES-DEMO-9001", "part_flag": "T", "heat_no": "G25102", "lot_no": "L9002", "result_id": "GM-3", "sample_id": "GT-2", "sequence_no": 1, "test_type": "TENSILE", "direction": "L", "yield_strength": 531, "tensile_strength": 693, "yield_ratio": 0.77, "elongation": 29, "impact_energy1": 118, "impact_energy2": 116, "impact_energy3": 119, "impact_energy_average": 118 }
+      ]
+    },
+    {
+      "datasetId": "lab_hardness",
+      "records": [
+        { "print_no": "MES-DEMO-9001", "part_flag": "T", "heat_no": "G25101", "lot_no": "L9001", "sample_id": "GH-1", "sequence_no": "1", "hard_type": "HRC", "quadrant": "1", "position": "OUT", "spot_no": "1", "value": 20.1, "is_approved": true },
+        { "print_no": "MES-DEMO-9001", "part_flag": "T", "heat_no": "G25101", "lot_no": "L9001", "sample_id": "GH-1", "sequence_no": "1", "hard_type": "HRC", "quadrant": "1", "position": "OUT", "spot_no": "2", "value": 19.8, "is_approved": true },
+        { "print_no": "MES-DEMO-9001", "part_flag": "T", "heat_no": "G25102", "lot_no": "L9002", "sample_id": "GH-2", "sequence_no": "1", "hard_type": "HRC", "quadrant": "1", "position": "OUT", "spot_no": "1", "value": 20.2, "is_approved": true }
+      ]
+    },
+    {
+      "datasetId": "process_checks",
+      "records": [
+        { "print_no": "MES-DEMO-9001", "part_flag": "T", "heat_no": "G25101", "lot_no": "L9001", "result_id": "PC-1", "item_code": "UT", "item_name": "超声检测", "method": "UT", "result": "合格", "is_approved": true },
+        { "print_no": "MES-DEMO-9001", "part_flag": "T", "heat_no": "G25102", "lot_no": "L9002", "result_id": "PC-2", "item_code": "VI", "item_name": "外观检查", "method": "目视", "result": "合格", "is_approved": true }
+      ]
+    }
+  ]
+}

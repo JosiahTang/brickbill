@@ -1,0 +1,142 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://schemas.brickbill.local/v2/reporting-contract.schema.json",
+  "title": "Brickbill reporting contracts v2",
+  "description": "Stable interchange contracts shared by projects, views, templates and generation services.",
+  "definitions": {
+    "id": { "type": "string", "minLength": 1, "maxLength": 180, "pattern": "^[A-Za-z][A-Za-z0-9_.-]*$" },
+    "rect": { "type": "object", "additionalProperties": false, "required": ["r", "c", "rows", "cols"], "properties": { "r": { "type": "integer", "minimum": 0 }, "c": { "type": "integer", "minimum": 0 }, "rows": { "type": "integer", "minimum": 1 }, "cols": { "type": "integer", "minimum": 1 } } },
+    "version": { "type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[A-Za-z0-9][A-Za-z0-9_.+-]*$" },
+    "scalar": { "type": ["string", "number", "boolean", "null"] },
+    "stringMap": { "type": "object", "propertyNames": { "$ref": "#/definitions/id" }, "additionalProperties": { "$ref": "#/definitions/scalar" } },
+    "valueType": { "enum": ["text", "number", "date", "boolean"] },
+    "dataField": {
+      "type": "object", "additionalProperties": false,
+      "required": ["fieldId", "label", "type", "nullable"],
+      "properties": { "fieldId": { "$ref": "#/definitions/id" }, "label": { "type": "string", "minLength": 1, "maxLength": 120 }, "type": { "$ref": "#/definitions/valueType" }, "nullable": { "type": "boolean" }, "unit": { "type": "string", "maxLength": 40 } }
+    },
+    "datasetDefinition": {
+      "type": "object", "additionalProperties": false,
+      "required": ["datasetId", "label", "grain", "required", "primaryKey", "fields"],
+      "properties": { "datasetId": { "$ref": "#/definitions/id" }, "label": { "type": "string", "minLength": 1 }, "grain": { "type": "string", "minLength": 1 }, "required": { "type": "boolean" }, "primaryKey": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "$ref": "#/definitions/id" } }, "fields": { "type": "array", "minItems": 1, "items": { "$ref": "#/definitions/dataField" } } }
+    },
+    "project": {
+      "type": "object", "additionalProperties": false,
+      "required": ["contractVersion", "projectId", "displayName", "projectVersion", "adapterId", "adapterVersion", "documentTypes", "businessKey", "datasets", "relationships"],
+      "properties": { "contractVersion": { "const": 2 }, "projectId": { "$ref": "#/definitions/id" }, "displayName": { "type": "string", "minLength": 1 }, "projectVersion": { "$ref": "#/definitions/version" }, "adapterId": { "$ref": "#/definitions/id" }, "adapterVersion": { "$ref": "#/definitions/version" }, "documentTypes": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "$ref": "#/definitions/id" } }, "businessKey": { "type": "object", "minProperties": 1, "propertyNames": { "$ref": "#/definitions/id" }, "additionalProperties": { "type": "object", "additionalProperties": false, "required": ["label", "type", "required"], "properties": { "label": { "type": "string", "minLength": 1 }, "type": { "$ref": "#/definitions/valueType" }, "required": { "type": "boolean" } } } }, "datasets": { "type": "array", "minItems": 1, "items": { "$ref": "#/definitions/datasetDefinition" } }, "relationships": { "type": "array", "items": { "$ref": "#/definitions/relationship" } } }
+    },
+    "relationship": {
+      "type": "object", "additionalProperties": false,
+      "required": ["relationshipId", "parentDatasetId", "childDatasetId", "parentKey", "childForeignKey", "cardinality"],
+      "properties": { "relationshipId": { "$ref": "#/definitions/id" }, "parentDatasetId": { "$ref": "#/definitions/id" }, "childDatasetId": { "$ref": "#/definitions/id" }, "parentKey": { "type": "array", "minItems": 1, "items": { "$ref": "#/definitions/id" } }, "childForeignKey": { "type": "array", "minItems": 1, "items": { "$ref": "#/definitions/id" } }, "cardinality": { "enum": ["one-to-one", "one-to-many"] } }
+    },
+    "catalogField": {
+      "type": "object", "additionalProperties": false,
+      "required": ["fieldId", "label", "type", "nullable", "grain", "source"],
+      "properties": { "fieldId": { "$ref": "#/definitions/id" }, "label": { "type": "string", "minLength": 1 }, "type": { "$ref": "#/definitions/valueType" }, "nullable": { "type": "boolean" }, "grain": { "type": "string", "minLength": 1 }, "unit": { "type": "string" }, "numberFormat": { "type": "string", "maxLength": 100 }, "group": { "type": "string" }, "source": { "$ref": "#/definitions/sourceRef" } }
+    },
+    "sourceRef": {
+      "oneOf": [
+        { "type": "object", "additionalProperties": false, "required": ["kind", "datasetId", "sourceFieldId"], "properties": { "kind": { "const": "dataset" }, "datasetId": { "$ref": "#/definitions/id" }, "sourceFieldId": { "$ref": "#/definitions/id" } } },
+        { "type": "object", "additionalProperties": false, "required": ["kind", "viewId", "sourceFieldId"], "properties": { "kind": { "const": "view" }, "viewId": { "$ref": "#/definitions/id" }, "sourceFieldId": { "$ref": "#/definitions/id" } } },
+        { "type": "object", "additionalProperties": false, "required": ["kind", "value"], "properties": { "kind": { "const": "constant" }, "value": { "$ref": "#/definitions/scalar" } } },
+        { "type": "object", "additionalProperties": false, "required": ["kind", "parameterId"], "properties": { "kind": { "const": "parameter" }, "parameterId": { "$ref": "#/definitions/id" } } },
+        { "type": "object", "additionalProperties": false, "required": ["kind", "pageField"], "properties": { "kind": { "const": "page" }, "pageField": { "enum": ["number", "total", "recordNumber", "groupNumber"] } } }
+      ]
+    },
+    "catalog": {
+      "type": "object", "additionalProperties": false,
+      "required": ["contractVersion", "projectId", "catalogVersion", "fields"],
+      "properties": { "contractVersion": { "const": 2 }, "projectId": { "$ref": "#/definitions/id" }, "catalogVersion": { "$ref": "#/definitions/version" }, "fields": { "type": "array", "items": { "$ref": "#/definitions/catalogField" } } }
+    },
+    "record": {
+      "type": "object", "additionalProperties": false,
+      "required": ["recordId", "values"],
+      "properties": { "recordId": { "type": "string", "minLength": 1, "maxLength": 500 }, "values": { "$ref": "#/definitions/stringMap" }, "sourceRecordIds": { "type": "array", "uniqueItems": true, "items": { "type": "string", "minLength": 1, "maxLength": 500 } } }
+    },
+    "adapterFieldMapping": {
+      "type": "object", "additionalProperties": false,
+      "required": ["fieldId", "sourceColumn", "type", "nullable"],
+      "properties": { "fieldId": { "$ref": "#/definitions/id" }, "sourceColumn": { "type": "string", "minLength": 1, "maxLength": 180 }, "type": { "$ref": "#/definitions/valueType" }, "nullable": { "type": "boolean" }, "unit": { "type": "string" }, "valueMap": { "type": "object", "additionalProperties": { "$ref": "#/definitions/scalar" } } }
+    },
+    "adapterDatasetMapping": {
+      "type": "object", "additionalProperties": false,
+      "required": ["datasetId", "sourceName", "keyFieldIds", "fields"],
+      "properties": { "datasetId": { "$ref": "#/definitions/id" }, "sourceName": { "$ref": "#/definitions/id" }, "keyFieldIds": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "$ref": "#/definitions/id" } }, "fields": { "type": "array", "items": { "$ref": "#/definitions/adapterFieldMapping" } } }
+    },
+    "projectAdapter": {
+      "type": "object", "additionalProperties": false,
+      "required": ["contractVersion", "projectId", "adapterId", "version", "maxRecords", "datasets"],
+      "properties": { "contractVersion": { "const": 2 }, "projectId": { "$ref": "#/definitions/id" }, "adapterId": { "$ref": "#/definitions/id" }, "version": { "$ref": "#/definitions/version" }, "maxRecords": { "type": "integer", "minimum": 1, "maximum": 500000 }, "datasets": { "type": "array", "minItems": 1, "items": { "$ref": "#/definitions/adapterDatasetMapping" } } }
+    },
+    "sourceRow": { "type": "object", "propertyNames": { "type": "string", "minLength": 1, "maxLength": 180 }, "additionalProperties": { "$ref": "#/definitions/scalar" } },
+    "sourceEnvelopeDataset": { "type": "object", "additionalProperties": false, "required": ["datasetId", "records"], "properties": { "datasetId": { "$ref": "#/definitions/id" }, "records": { "type": "array", "items": { "$ref": "#/definitions/sourceRow" } } } },
+    "sourceEnvelope": {
+      "type": "object", "additionalProperties": false,
+      "required": ["contractVersion", "projectId", "documentType", "businessKey", "sourceVersion", "collectedAt", "datasets"],
+      "properties": { "contractVersion": { "const": 2 }, "projectId": { "$ref": "#/definitions/id" }, "documentType": { "$ref": "#/definitions/id" }, "businessKey": { "type": "object", "propertyNames": { "$ref": "#/definitions/id" }, "additionalProperties": { "type": "string", "maxLength": 200 } }, "sourceVersion": { "$ref": "#/definitions/version" }, "collectedAt": { "type": "string", "format": "date-time" }, "datasets": { "type": "array", "minItems": 1, "items": { "$ref": "#/definitions/sourceEnvelopeDataset" } } }
+    },
+    "datasetRows": {
+      "type": "object", "additionalProperties": false,
+      "required": ["datasetId", "records"],
+      "properties": { "datasetId": { "$ref": "#/definitions/id" }, "records": { "type": "array", "items": { "$ref": "#/definitions/record" } } }
+    },
+    "datasetBundle": {
+      "type": "object", "additionalProperties": false,
+      "required": ["contractVersion", "projectId", "documentType", "businessKey", "sourceVersion", "collectedAt", "datasets"],
+      "properties": { "contractVersion": { "const": 2 }, "projectId": { "$ref": "#/definitions/id" }, "documentType": { "$ref": "#/definitions/id" }, "businessKey": { "$ref": "#/definitions/stringMap" }, "sourceVersion": { "$ref": "#/definitions/version" }, "collectedAt": { "type": "string", "format": "date-time" }, "datasets": { "type": "array", "minItems": 1, "items": { "$ref": "#/definitions/datasetRows" } } }
+    },
+    "filterStep": { "type": "object", "additionalProperties": false, "required": ["op", "fieldId", "operator"], "properties": { "op": { "const": "filter" }, "fieldId": { "$ref": "#/definitions/id" }, "operator": { "enum": ["eq", "neq", "gt", "gte", "lt", "lte", "in", "contains", "isNull"] }, "value": { "oneOf": [{ "$ref": "#/definitions/scalar" }, { "type": "array", "items": { "$ref": "#/definitions/scalar" } }] } } },
+    "sortStep": { "type": "object", "additionalProperties": false, "required": ["op", "by"], "properties": { "op": { "const": "sort" }, "by": { "type": "array", "minItems": 1, "items": { "type": "object", "additionalProperties": false, "required": ["fieldId", "direction"], "properties": { "fieldId": { "$ref": "#/definitions/id" }, "direction": { "enum": ["asc", "desc"] } } } } } },
+    "projectStep": { "type": "object", "additionalProperties": false, "required": ["op", "fields"], "properties": { "op": { "const": "project" }, "fields": { "type": "array", "minItems": 1, "items": { "type": "object", "additionalProperties": false, "required": ["sourceFieldId", "outputFieldId"], "properties": { "sourceFieldId": { "$ref": "#/definitions/id" }, "outputFieldId": { "$ref": "#/definitions/id" } } } } } },
+    "groupStep": { "type": "object", "additionalProperties": false, "required": ["op", "by", "aggregations"], "properties": { "op": { "const": "group" }, "by": { "type": "array", "uniqueItems": true, "items": { "$ref": "#/definitions/id" } }, "aggregations": { "type": "array", "minItems": 1, "items": { "type": "object", "additionalProperties": false, "required": ["operation", "outputFieldId"], "properties": { "operation": { "enum": ["count", "sum", "average", "min", "max"] }, "fieldId": { "$ref": "#/definitions/id" }, "outputFieldId": { "$ref": "#/definitions/id" } } } } } },
+    "pivotStep": { "type": "object", "additionalProperties": false, "required": ["op", "by", "columnFieldId", "valueFieldId", "columns", "duplicatePolicy"], "properties": { "op": { "const": "pivot" }, "by": { "type": "array", "items": { "$ref": "#/definitions/id" } }, "columnFieldId": { "$ref": "#/definitions/id" }, "valueFieldId": { "$ref": "#/definitions/id" }, "columns": { "type": "object", "minProperties": 1, "additionalProperties": { "type": "object", "additionalProperties": false, "required": ["value", "outputFieldId"], "properties": { "value": { "$ref": "#/definitions/scalar" }, "outputFieldId": { "$ref": "#/definitions/id" } } } }, "duplicatePolicy": { "enum": ["reject", "sum", "average", "min", "max"] } } },
+    "lookupStep": { "type": "object", "additionalProperties": false, "required": ["op", "relationshipId", "fields"], "properties": { "op": { "const": "lookup" }, "relationshipId": { "$ref": "#/definitions/id" }, "fields": { "type": "array", "minItems": 1, "items": { "type": "object", "additionalProperties": false, "required": ["childFieldId", "outputFieldId"], "properties": { "childFieldId": { "$ref": "#/definitions/id" }, "outputFieldId": { "$ref": "#/definitions/id" } } } } } },
+    "functionStep": { "type": "object", "additionalProperties": false, "required": ["op", "functionId", "version", "parameters"], "properties": { "op": { "const": "applyFunction" }, "functionId": { "$ref": "#/definitions/id" }, "version": { "$ref": "#/definitions/version" }, "parameters": { "$ref": "#/definitions/stringMap" } } },
+    "childView": { "type": "object", "additionalProperties": false, "required": ["relationshipId", "viewId", "as", "parentFieldIds", "childFieldIds"], "properties": { "relationshipId": { "$ref": "#/definitions/id" }, "viewId": { "$ref": "#/definitions/id" }, "as": { "$ref": "#/definitions/id" }, "parentFieldIds": { "type": "array", "minItems": 1, "items": { "$ref": "#/definitions/id" } }, "childFieldIds": { "type": "array", "minItems": 1, "items": { "$ref": "#/definitions/id" } } } },
+    "dataView": {
+      "type": "object", "additionalProperties": false,
+      "required": ["contractVersion", "viewId", "label", "version", "sourceDatasetId", "outputFields", "steps"],
+      "properties": { "contractVersion": { "const": 2 }, "viewId": { "$ref": "#/definitions/id" }, "label": { "type": "string", "minLength": 1 }, "version": { "$ref": "#/definitions/version" }, "sourceDatasetId": { "$ref": "#/definitions/id" }, "outputFields": { "type": "array", "items": { "$ref": "#/definitions/id" } }, "steps": { "type": "array", "items": { "oneOf": [{ "$ref": "#/definitions/filterStep" }, { "$ref": "#/definitions/sortStep" }, { "$ref": "#/definitions/projectStep" }, { "$ref": "#/definitions/groupStep" }, { "$ref": "#/definitions/pivotStep" }, { "$ref": "#/definitions/lookupStep" }, { "$ref": "#/definitions/functionStep" }] } }, "children": { "type": "array", "items": { "$ref": "#/definitions/childView" } } }
+    },
+    "functionDefinition": {
+      "type": "object", "additionalProperties": false,
+      "required": ["functionId", "version", "label", "inputDatasetIds", "outputDatasetId", "outputFields", "parameterSchema", "deterministic"],
+      "properties": { "functionId": { "$ref": "#/definitions/id" }, "version": { "$ref": "#/definitions/version" }, "label": { "type": "string", "minLength": 1 }, "inputDatasetIds": { "type": "array", "minItems": 1, "items": { "$ref": "#/definitions/id" } }, "outputDatasetId": { "$ref": "#/definitions/id" }, "outputFields": { "type": "array", "items": { "$ref": "#/definitions/id" } }, "parameterSchema": { "type": "object", "additionalProperties": { "$ref": "#/definitions/valueType" } }, "deterministic": { "const": true } }
+    },
+    "templateWorksheet": {
+      "type": "object", "additionalProperties": false,
+      "required": ["worksheetId", "name", "visible", "bindingMode", "document"],
+      "properties": { "worksheetId": { "$ref": "#/definitions/id" }, "name": { "type": "string", "minLength": 1, "maxLength": 31 }, "visible": { "type": "boolean" }, "bindingMode": { "enum": ["stable-field-id", "legacy-path"] }, "document": { "type": "object", "minProperties": 1 } }
+    },
+    "pageMarginMm": { "type": "object", "additionalProperties": false, "required": ["top", "right", "bottom", "left"], "properties": { "top": { "type": "number", "minimum": 0 }, "right": { "type": "number", "minimum": 0 }, "bottom": { "type": "number", "minimum": 0 }, "left": { "type": "number", "minimum": 0 } } },
+    "pageRegion": {
+      "type": "object", "additionalProperties": false,
+      "required": ["regionId", "worksheetId", "label", "kind", "rect"],
+      "properties": { "regionId": { "$ref": "#/definitions/id" }, "worksheetId": { "$ref": "#/definitions/id" }, "label": { "type": "string", "minLength": 1 }, "kind": { "enum": ["fixed", "detail", "header", "footer", "groupHeader", "groupFooter"] }, "rect": { "$ref": "#/definitions/rect" }, "viewId": { "$ref": "#/definitions/id" }, "paginationGroupId": { "$ref": "#/definitions/id" }, "groupBy": { "type": "array", "uniqueItems": true, "items": { "$ref": "#/definitions/id" } }, "orderBy": { "type": "array", "items": { "type": "object", "additionalProperties": false, "required": ["fieldId", "direction"], "properties": { "fieldId": { "$ref": "#/definitions/id" }, "direction": { "enum": ["asc", "desc"] } } } }, "recordHeight": { "type": "integer", "minimum": 1 }, "capacityRows": { "type": "integer", "minimum": 1 }, "emptyPolicy": { "enum": ["keep", "hide"] }, "keepGroupsTogether": { "type": "boolean" }, "oversizedGroupPolicy": { "enum": ["error", "split-records"] }, "repeatOn": { "enum": ["all", "first", "last"] }, "mergeFieldIds": { "type": "array", "uniqueItems": true, "items": { "$ref": "#/definitions/id" } }, "hideRepeatedFieldIds": { "type": "array", "uniqueItems": true, "items": { "$ref": "#/definitions/id" } }, "repeatGroupFieldIds": { "type": "array", "uniqueItems": true, "items": { "$ref": "#/definitions/id" } }, "appendixIfViewHasRecords": { "$ref": "#/definitions/id" }, "blankRows": { "enum": ["keep", "remove"] } }
+    },
+    "pageDefinition": {
+      "type": "object", "additionalProperties": false,
+      "required": ["pageDefinitionId", "label", "pageType", "worksheetIds", "paperSize", "orientation", "marginsMm", "regions"],
+      "properties": { "pageDefinitionId": { "$ref": "#/definitions/id" }, "label": { "type": "string", "minLength": 1 }, "pageType": { "enum": ["main", "continuation", "appendix"] }, "paginationMode": { "enum": ["fixed", "flow"] }, "worksheetIds": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "$ref": "#/definitions/id" } }, "paperSize": { "enum": ["A4", "A3", "Letter", "Legal", "custom"] }, "orientation": { "enum": ["portrait", "landscape"] }, "customPaperMm": { "type": "object", "additionalProperties": false, "required": ["width", "height"], "properties": { "width": { "type": "number", "exclusiveMinimum": 0 }, "height": { "type": "number", "exclusiveMinimum": 0 } } }, "marginsMm": { "$ref": "#/definitions/pageMarginMm" }, "printableRect": { "$ref": "#/definitions/rect" }, "repeatHeaderRows": { "type": "array", "items": { "type": "integer", "minimum": 0 } }, "continuationOf": { "$ref": "#/definitions/id" }, "regions": { "type": "array", "items": { "$ref": "#/definitions/pageRegion" } }, "imagePlacements": { "type": "array", "items": { "$ref": "#/definitions/templateImagePlacement" } } }
+    },
+    "resource": { "type": "object", "additionalProperties": false, "required": ["resourceId", "mediaType", "base64"], "properties": { "resourceId": { "$ref": "#/definitions/id" }, "mediaType": { "type": "string", "minLength": 1 }, "base64": { "type": "string", "maxLength": 30000000 } } },
+    "templateImagePlacement": { "type": "object", "additionalProperties": false, "required": ["imageId", "resourceId", "worksheetId", "rect"], "properties": { "imageId": { "$ref": "#/definitions/id" }, "resourceId": { "$ref": "#/definitions/id" }, "worksheetId": { "$ref": "#/definitions/id" }, "rect": { "$ref": "#/definitions/rect" }, "repeatOn": { "enum": ["all", "first", "last"] } } },
+    "templatePackage": {
+      "type": "object", "additionalProperties": false,
+      "required": ["contractVersion", "packageId", "projectId", "name", "revision", "status", "catalogVersion", "viewRefs", "functionRefs", "worksheets"],
+      "properties": { "contractVersion": { "const": 2 }, "packageId": { "$ref": "#/definitions/id" }, "projectId": { "$ref": "#/definitions/id" }, "name": { "type": "string", "minLength": 1, "maxLength": 120 }, "revision": { "type": "integer", "minimum": 0 }, "status": { "enum": ["draft", "published", "disabled"] }, "catalogVersion": { "$ref": "#/definitions/version" }, "viewRefs": { "type": "array", "items": { "$ref": "#/definitions/versionRefView" } }, "functionRefs": { "type": "array", "items": { "$ref": "#/definitions/versionRefFunction" } }, "viewDrafts": { "type": "array", "items": { "$ref": "#/definitions/dataView" } }, "worksheets": { "type": "array", "minItems": 1, "items": { "$ref": "#/definitions/templateWorksheet" } }, "pageDefinitions": { "type": "array", "items": { "$ref": "#/definitions/pageDefinition" } }, "resources": { "type": "array", "items": { "$ref": "#/definitions/resource" } }, "sourceWorkbook": { "type": "object", "additionalProperties": false, "required": ["fileName", "base64"], "properties": { "fileName": { "type": "string", "minLength": 1 }, "base64": { "type": "string", "maxLength": 30000000 } } } }
+    },
+    "versionRefView": { "type": "object", "additionalProperties": false, "required": ["viewId", "version"], "properties": { "viewId": { "$ref": "#/definitions/id" }, "version": { "$ref": "#/definitions/version" } } },
+    "versionRefFunction": { "type": "object", "additionalProperties": false, "required": ["functionId", "version"], "properties": { "functionId": { "$ref": "#/definitions/id" }, "version": { "$ref": "#/definitions/version" } } },
+    "pageAllocation": { "type": "object", "additionalProperties": false, "required": ["regionId", "viewId", "recordIds", "groupKeys"], "properties": { "regionId": { "$ref": "#/definitions/id" }, "viewId": { "$ref": "#/definitions/id" }, "recordIds": { "type": "array", "items": { "type": "string", "minLength": 1 } }, "groupKeys": { "type": "array", "items": { "type": "array", "items": { "$ref": "#/definitions/scalar" } } }, "startRow": { "type": "integer", "minimum": 0 }, "recordHeight": { "type": "integer", "minimum": 1 } } },
+    "pageEntry": { "type": "object", "additionalProperties": false, "required": ["pageNumber", "pageType", "pageDefinitionId", "allocations", "blankRows", "diagnostics"], "properties": { "pageNumber": { "type": "integer", "minimum": 1 }, "pageType": { "type": "string", "minLength": 1 }, "pageDefinitionId": { "$ref": "#/definitions/id" }, "pageGroupId": { "type": "string" }, "worksheetIds": { "type": "array", "items": { "$ref": "#/definitions/id" } }, "rowHeightsPx": { "type": "object", "additionalProperties": { "type": "array", "items": { "type": "number", "minimum": 0 } } }, "flowItems": { "type": "array", "items": { "type": "object", "additionalProperties": false, "required": ["regionId", "viewId", "recordId", "groupKey", "startRow", "rowHeightsPx"], "properties": { "regionId": { "$ref": "#/definitions/id" }, "viewId": { "$ref": "#/definitions/id" }, "recordId": { "type": "string", "minLength": 1 }, "groupKey": { "type": "array", "items": { "$ref": "#/definitions/scalar" } }, "startRow": { "type": "integer", "minimum": 0 }, "rowHeightsPx": { "type": "array", "minItems": 1, "items": { "type": "number", "exclusiveMinimum": 0 } } } } }, "allocations": { "type": "array", "items": { "$ref": "#/definitions/pageAllocation" } }, "blankRows": { "type": "object", "propertyNames": { "$ref": "#/definitions/id" }, "additionalProperties": { "type": "integer", "minimum": 0 } }, "diagnostics": { "type": "array", "items": { "$ref": "#/definitions/reportingError" } } } },
+    "pagePlan": { "type": "object", "additionalProperties": false, "required": ["contractVersion", "templateId", "templateVersion", "pages", "totalPages", "groupCount"], "properties": { "contractVersion": { "const": 2 }, "templateId": { "$ref": "#/definitions/id" }, "templateVersion": { "type": "integer", "minimum": 0 }, "pages": { "type": "array", "minItems": 1, "items": { "$ref": "#/definitions/pageEntry" } }, "totalPages": { "type": "integer", "minimum": 1 }, "groupCount": { "type": "integer", "minimum": 0 } } },
+    "reportingError": { "type": "object", "additionalProperties": false, "required": ["code", "message", "stage"], "properties": { "code": { "enum": ["CONTRACT_INVALID", "CONTRACT_VERSION_UNSUPPORTED", "DATA_NOT_FOUND", "AMBIGUOUS_SCOPE", "DUPLICATE_KEY", "RELATION_CARDINALITY_ERROR", "FIELD_NOT_FOUND", "VALUE_TYPE_ERROR", "VIEW_INVALID", "RULE_VERSION_NOT_FOUND", "GROUP_TOO_LARGE", "LAYOUT_OVERFLOW", "PAGE_PLAN_NOT_CONVERGED", "TEMPLATE_MATCH_AMBIGUOUS", "REVISION_CONFLICT", "UNSUPPORTED_FORMULA_LAYOUT", "SOURCE_TIMEOUT", "SOURCE_UNAVAILABLE", "SOURCE_RESPONSE_INVALID", "RESOURCE_LIMIT_EXCEEDED"] }, "message": { "type": "string", "minLength": 1 }, "stage": { "enum": ["contract", "collect", "catalog", "view", "rule", "layout", "render", "export", "repository"] }, "context": { "type": "object", "additionalProperties": true }, "retryable": { "type": "boolean" } } },
+    "generationSnapshot": {
+      "type": "object", "additionalProperties": false,
+      "required": ["contractVersion", "generationId", "projectId", "businessKey", "templateRef", "catalogVersion", "viewRefs", "functionRefs", "collectedAt", "sourceVersion", "data", "viewResults"],
+      "properties": { "contractVersion": { "const": 2 }, "generationId": { "$ref": "#/definitions/id" }, "projectId": { "$ref": "#/definitions/id" }, "businessKey": { "$ref": "#/definitions/stringMap" }, "templateRef": { "type": "object", "additionalProperties": false, "required": ["packageId", "revision"], "properties": { "packageId": { "$ref": "#/definitions/id" }, "revision": { "type": "integer", "minimum": 0 } } }, "catalogVersion": { "$ref": "#/definitions/version" }, "viewRefs": { "type": "array", "items": { "$ref": "#/definitions/versionRefView" } }, "functionRefs": { "type": "array", "items": { "$ref": "#/definitions/versionRefFunction" } }, "collectedAt": { "type": "string", "format": "date-time" }, "sourceVersion": { "$ref": "#/definitions/version" }, "data": { "$ref": "#/definitions/datasetBundle" }, "viewResults": { "type": "array", "items": { "type": "object", "minProperties": 1 } }, "pagePlan": { "$ref": "#/definitions/pagePlan" }, "output": { "type": "object", "additionalProperties": false, "required": ["fileName", "mediaType", "sha256", "byteLength"], "properties": { "fileName": { "type": "string", "minLength": 1 }, "mediaType": { "type": "string", "minLength": 1 }, "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" }, "byteLength": { "type": "integer", "minimum": 0 } } } }
+    }
+  }
+}

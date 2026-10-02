@@ -1,0 +1,936 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="referrer" content="no-referrer"><title>单据模板设计器 · 离线交互预览</title><style>:root{font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei",sans-serif;color:#20333b;font-size:13px;background:#f4f6f8;font-synthesis:none;--accent:#176b62;--line:#e3e9ed;--muted:#7c8b93}*{box-sizing:border-box}body{margin:0}button,input,select,textarea{font:inherit}button{cursor:pointer;border:1px solid #dae2e7;background:#fff;color:#42555f;border-radius:6px;padding:8px 11px;transition:background .12s;white-space:nowrap}button:hover{background:#edf5f2;border-color:#a4c6bb}button:disabled{opacity:.38;cursor:default}button.primary{background:var(--accent);border-color:var(--accent);color:white}button.primary:hover{background:#125b52}button.danger{color:#b54b4b;border-color:#efdada;background:#fffafa}button.wide{width:100%;margin-top:8px}button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible{outline:2px solid #5cab96;outline-offset:2px}.app{height:100vh;min-height:640px;min-width:1080px;display:grid;grid-template-columns:218px minmax(0,1fr) 278px;grid-template-rows:76px 38px minmax(0,1fr)}.topbar{grid-column:1/-1;background:#fff;border-bottom:1px solid var(--line);display:flex;align-items:center;padding:0 24px;gap:13px}.brand-mark{height:38px;width:38px;display:grid;place-items:center;background:var(--accent);border-radius:10px;color:#fff;font-size:25px}.brand h1{margin:0;font-size:18px;letter-spacing:.5px;font-weight:650}.brand>span{display:block;margin-top:5px;font-size:9px;color:#8a969d;letter-spacing:1.8px}.version{border:1px solid #d9e6e1;border-radius:20px;color:#507b6c;padding:4px 9px;font-size:10px;margin-left:3px}.actions{margin-left:auto;display:flex;gap:8px}.actions button{font-size:12px}.actions .primary{margin-left:5px}.notice{grid-column:1/-1;display:flex;align-items:center;padding:0 24px;gap:8px;background:#eef5f3;border-bottom:1px solid #dce9e4;color:#5d786e;font-size:11px}.notice-dot{width:5px;height:5px;border-radius:50%;background:#4c8c75}.notice button{margin-left:auto;border:none;background:none;padding:0;font-size:11px;color:#527768}.left-panel,.right-panel{overflow:auto;background:white;padding:23px 16px 20px}.left-panel{border-right:1px solid var(--line)}.right-panel{border-left:1px solid var(--line);padding:23px 18px}.panel-label{color:#92a0a7;font-size:9px;letter-spacing:1.7px;display:flex;justify-content:space-between;margin-bottom:9px}.panel-label>span{letter-spacing:0;color:#a3adb2}h2{font-size:16px;margin:0;font-weight:650}.intro{color:#85929a;font-size:11px;line-height:1.6;margin:8px 0 18px}.search-wrap{position:relative;margin-bottom:23px}.search-wrap>span{position:absolute;left:10px;top:7px;color:#8c9ca5;font-size:18px}.search-wrap input{padding-left:30px;font-size:11px;background:#fafbfc;border-color:#e8edf0}.section-label{display:flex;justify-content:space-between;align-items:center;font-size:11px;font-weight:600;color:#647680;margin-bottom:11px}.section-label>span{font-size:10px;color:#97a4ab;font-weight:400}.field-title{margin-top:24px}.material{position:relative;display:flex;align-items:center;gap:10px;padding:12px 9px;border:1px solid #e0e7eb;border-radius:8px;margin-bottom:9px;cursor:grab;background:white;min-height:64px;transition:all .15s}.material:hover{border-color:#8ebcab;background:#f7fbf9;transform:translateY(-1px)}.material-icon{width:33px;height:34px;display:grid;place-items:center;border-radius:7px;background:#eef4f2;color:#568476;font-size:19px;flex-shrink:0}.material strong{display:block;font-size:11px;line-height:1.5;font-weight:600;color:#485f6a}.material small{display:block;color:#93a0a7;font-size:10px;margin-top:4px}.grip{margin-left:auto;color:#b5c1c7;font-size:16px}.field{padding:9px;border:1px solid #e5eaef;border-radius:6px;display:flex;align-items:center;gap:7px;margin-bottom:7px;background:#fafbfc;cursor:grab}.field>i{font-style:normal;font-size:10px;color:#7f9c95}.field strong{font-size:11px;font-weight:500;color:#526871}.field small{display:block;font-size:9px;color:#99a5ad;margin-top:3px}.sidebar-note{font-size:10px;color:#94a0a7;line-height:1.9;margin-top:20px;padding-top:14px;border-top:1px solid #edf0f3}.workspace{min-height:0;min-width:0;display:flex;flex-direction:column;padding:21px 20px 0;background:#f3f6f8}.canvas-heading{display:flex;justify-content:space-between;align-items:center;margin-bottom:17px;height:24px}.canvas-heading>div{display:flex;gap:9px;align-items:center}.canvas-heading strong{font-size:13px;font-weight:600}.doc-icon{font-size:20px;color:#618478}.tag{font-size:9px;padding:3px 6px;background:#e6eeeb;color:#6e8b7f;border-radius:4px}.dim{font-size:10px;color:#92a1a9}.formula-bar{border:1px solid #dce4e9;border-bottom:none;min-height:39px;display:flex;align-items:center;background:#fff;border-radius:7px 7px 0 0;font-size:11px;overflow:hidden}.address{width:82px;text-align:center;border-right:1px solid #e7ecef;padding:8px;font-weight:600;flex-shrink:0;color:#567369}.formula-symbol{padding:0 12px;font-style:italic;color:#a7b3b9;font-size:15px}#formula-value{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:#758792}#formula-type{margin-left:auto;white-space:nowrap;padding:0 10px;color:#9ba7ad;font-size:10px}.table-wrap{position:relative;flex:1;min-height:0;overflow:auto;background:#fff;border:1px solid #dce4e9}table{table-layout:fixed;border-collapse:separate;border-spacing:0;background:#fff;min-width:100%;font-size:12px}th{height:29px;font-weight:400;color:#87969f;background:#f6f8fa;border-right:1px solid #e4e9ed;border-bottom:1px solid #e4e9ed;user-select:none}thead th{position:sticky;top:0;z-index:3;font-size:10px}th.row-head{position:sticky;left:0;z-index:2;font-size:10px;text-align:center}th.corner{position:sticky;left:0;top:0;z-index:4;width:39px;color:#b6c3ca}td{height:32px;border-right:1px solid #eaf0f3;border-bottom:1px solid #eaf0f3;padding:5px 9px;cursor:cell;overflow:hidden;max-width:0;color:#536973;user-select:none;background:white;box-sizing:border-box}td .cell-content{overflow:hidden;text-overflow:ellipsis;white-space:pre-wrap;line-height:1.5}td.has-binding .cell-content{font-family:Consolas,"SFMono-Regular",monospace;font-size:11px;letter-spacing:-.35px}td.selected{position:relative;outline:2px solid #398878;outline-offset:-2px;z-index:1}td.selection-area:not(.selected){box-shadow:inset 0 0 0 1px rgba(34,121,99,.32);background-image:linear-gradient(#176b620a,#176b620a)!important}td.hover-good{box-shadow:inset 0 0 0 2px #4a9e7f!important}td.hover-bad{box-shadow:inset 0 0 0 2px #cc7a74!important;background-image:linear-gradient(#bb333316,#bb333316)!important}.sheet-tabs{background:#fbfcfd;border:1px solid #dce4e9;border-top:none;height:34px;display:flex;align-items:center;gap:18px;flex-shrink:0;font-size:10px;color:#9aa7b0;border-radius:0 0 6px 6px}.active-tab{align-self:stretch;display:flex;align-items:center;padding:0 22px;color:#357360;background:#eff6f2;border-bottom:2px solid #398878;font-size:11px;font-weight:600}.sheet-tabs #counts{margin-left:auto;padding-right:12px;white-space:nowrap}.status{min-height:38px;display:flex;align-items:center;gap:7px;color:#82969e;font-size:10px}.status-dot{background:#679e86;border-radius:50%;width:5px;height:5px;flex-shrink:0}#status{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}#revision{margin-left:auto;flex-shrink:0;color:#9aa8b0}.property-heading{display:flex;justify-content:space-between;align-items:center}.property-heading>span{font-size:11px;color:#547c6c;padding:3px 8px;background:#edf5f0;border-radius:4px}.property-group{padding:0 0 18px;margin-bottom:17px;border-bottom:1px solid #e8edef}.property-group h3{font-size:11px;margin:0 0 13px;color:#647b86;font-weight:600}label{display:block;font-size:10px;color:#81939e;margin:12px 0 6px}input,select,textarea{border:1px solid #dfe6eb;border-radius:5px;padding:8px 9px;width:100%;background:#fff;color:#546e7a;min-width:0;resize:vertical;font-size:11px}textarea{line-height:1.7}select{height:34px}.property-group button{font-size:11px}.two-cols{display:grid;grid-template-columns:1fr 1fr;gap:9px}.two-cols input{height:33px}input[type=color]{padding:5px;background:white;cursor:pointer}.button-row{display:flex;gap:8px;margin-top:9px}.button-row>button{flex:1;padding:7px 5px}.block-detail{font-size:11px;color:#758997;line-height:1.7}.move-handle{border:1px dashed #9bb9ab;background:#f3f8f5;color:#6b8c7d;padding:12px 8px;font-size:10px;text-align:center;border-radius:6px;cursor:grab}dialog{border:1px solid #dae5e0;border-radius:14px;width:530px;padding:28px;box-shadow:0 18px 80px #122a3633;color:#526977;font-size:13px;line-height:1.8}dialog::backdrop{background:#213a494a;backdrop-filter:blur(3px)}dialog h2{margin:6px 0 14px;color:#2e5348}.dialog-kicker{font-size:10px;letter-spacing:2px;color:#89a196}code{background:#eef4f1;padding:2px 4px;border-radius:4px;font-size:11px}::-webkit-scrollbar{width:9px;height:9px}::-webkit-scrollbar-thumb{background:#cbd7dd;border:2px solid #f5f8f9;border-radius:10px}::-webkit-scrollbar-track{background:#f5f8f9}@media(max-width:1200px){.app{grid-template-columns:196px minmax(0,1fr) 256px}.topbar{padding:0 16px}.brand h1{font-size:16px}.version{display:none}.workspace{padding:17px 12px 0}.sheet-tabs>span:not(#counts){display:none}}
+[hidden]{display:none!important}
+</style></head><body>
+<div class="app">
+<header class="topbar"><div class="brand-mark" aria-hidden="true">▦</div><div class="brand"><h1>单据模板设计器</h1><span>REPORT TEMPLATE DESIGNER</span></div><span class="version">离线交互预览</span><div class="actions"><button id="undo" title="撤销">↶ 撤销</button><button id="redo" title="重做">↷ 重做</button><button id="load-demo">载入示例</button><button id="new-doc">新建空白</button><button id="export-json" class="primary">导出模型 JSON <span>↗</span></button></div></header>
+<div class="notice"><span class="notice-dot"></span><span>历史 v0.1 预览，不含本次 Excel 导入和字段字典功能。请运行 start-windows.cmd 打开新版完整应用。</span><button id="about">验证范围 ↗</button></div>
+<aside class="left-panel"><div class="panel-label">COMPONENTS <span>01</span></div><h2>业务物料</h2><p class="intro">拖入画布，组合你的业务单据。</p><div class="search-wrap"><span>⌕</span><input id="search" placeholder="搜索积木或业务字段" aria-label="搜索积木或业务字段"></div><div class="section-label">预制积木 <span>4</span></div><div id="materials"></div><div class="section-label field-title">字段字典 <span>11</span></div><div id="fields"></div><div class="sidebar-note">双击积木也可放到当前选区。<br>已有内容不会被拖放直接覆盖。</div></aside>
+<main class="workspace"><div class="canvas-heading"><div><span class="doc-icon">▤</span><strong id="doc-name">销售订单模板</strong><span class="tag">模板模式</span></div><span class="dim" id="dimensions"></span></div><div class="formula-bar"><span id="address" class="address">A1</span><span class="formula-symbol">ƒx</span><span id="formula-value"></span><span class="formula-type" id="formula-type"></span></div><div class="table-wrap" id="table-wrap"><table id="grid" aria-label="单据设计网格"></table><div id="hover-overlay" aria-hidden="true"></div></div><div class="sheet-tabs"><div class="active-tab">▦ &nbsp;单据</div><span>Shift + 点击可选择区域</span><span id="counts"></span></div><div class="status"><span class="status-dot" id="status-dot"></span><span id="status" role="status" aria-live="polite">已载入销售订单示例，可继续拖放积木或编辑字段。</span><span id="revision">rev 1</span></div></main>
+<aside class="right-panel"><div class="panel-label">PROPERTIES <span>02</span></div><div class="property-heading"><h2>属性配置</h2><span id="selection-chip">A1</span></div><p class="intro" id="selection-size">1 行 × 4 列</p><div class="property-group"><h3>内容与绑定</h3><label for="binding">业务字段</label><select id="binding"></select><button id="apply-binding" class="wide">应用字段 / 解除绑定</button><label for="cell-text">静态文本</label><textarea id="cell-text" rows="2" placeholder="请输入标题或固定内容"></textarea><button id="apply-text" class="wide">应用文本</button><label for="format">数据格式</label><select id="format"><option value="text">文本</option><option value="number">数字 · 两位小数</option><option value="date">日期 · yyyy-mm-dd</option></select></div>
+<div class="property-group"><h3>样式与布局</h3><label for="align">水平对齐</label><select id="align"><option value="left">左对齐</option><option value="center">居中</option><option value="right">右对齐</option></select><div class="two-cols"><div><label for="background">背景颜色</label><input id="background" type="color" value="#ffffff"></div><div><label for="font-size">字号（pt）</label><input id="font-size" type="number" min="6" max="72" value="11"></div></div><div class="button-row"><button id="apply-style">应用样式</button><button id="toggle-bold">B 加粗</button></div><div class="button-row"><button id="set-border">细边框</button><button id="clear-border">无边框</button></div><div class="two-cols"><div><label for="row-height">行高（px）</label><input id="row-height" type="number" min="16" max="400" value="32"></div><div><label for="col-width">列宽（px）</label><input id="col-width" type="number" min="24" max="600" value="174"></div></div><button id="apply-size" class="wide">应用行高 / 列宽</button><div class="button-row"><button id="merge">合并区域</button><button id="unmerge">取消合并</button></div><button id="clear-range" class="wide">清除独立区域</button></div>
+<div id="block-properties" class="property-group"><h3>积木实例</h3><p id="block-name" class="block-detail"></p><div id="move-handle" draggable="true" class="move-handle">⠿ 拖动这里，整体移动积木</div><label for="repeat-source">明细数据源</label><select id="repeat-source"><option value="">普通积木 · 不扩展</option><option value="items">items · 明细列表</option></select><div class="two-cols"><div><label for="repeat-offset">样板行偏移</label><input id="repeat-offset" type="number" min="0" value="1"></div><div><label for="repeat-count">样板行数</label><input id="repeat-count" type="number" min="1" value="1"></div></div><label for="repeat-empty">空列表处理</label><select id="repeat-empty"><option value="remove">移除样板行</option><option value="keep">保留空白样板</option></select><button id="apply-repeat" class="wide">应用扩展规则</button><button id="delete-block" class="wide danger">删除整个积木</button></div><div class="sidebar-note">预览不执行明细扩行。数据不上传，不会自动保存；离开前请导出模型。</div></aside>
+</div>
+<dialog id="info-dialog"><div class="dialog-kicker">验证范围</div><h2>离线预览，不是完整应用部署</h2><p>此页面可直接双击打开，不依赖网络、Node.js 或 npm。</p><p>积木定义、碰撞校验、事务回滚、合并、字段绑定及明细规则直接来自原工程的 <code>src/domain</code>，仅视图和状态容器替换为原生 HTML / JavaScript。</p><p>可验证：拖放、字段配置、样式、行高列宽、合并、撤销重做、整体移动与 JSON 导出。</p><p><strong>不包含：</strong>Univer 原生画布、Pinia/Vue 运行时、ExcelJS 文件导出以及 C# 宿主通信。这些功能保留在完整源码中，本次尚未完成其浏览器构建验证。</p><p>完整应用：安装 Node.js 22.6+，解压代码包，运行 <code>start-windows.cmd</code>（首次需联网安装 npm 依赖），或使用 <code>npm start</code>。</p><button id="close-dialog" class="primary wide">开始验证交互</button></dialog>
+<noscript>请启用 JavaScript 以查看交互预览。</noscript><script>(function(){'use strict';
+const modules={"model": function(module, exports, require) {
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.numberFormat = exports.documentFields = exports.keyOf = exports.FIELDS = void 0;
+exports.copy = copy;
+exports.newDocument = newDocument;
+exports.fieldByPath = fieldByPath;
+exports.displayText = displayText;
+exports.FIELDS = [
+    { path: 'orderNo', label: '订单号', format: 'text' },
+    { path: 'orderDate', label: '订单日期', format: 'date' },
+    { path: 'customer.name', label: '客户名称', format: 'text' },
+    { path: 'customer.contact', label: '联系人', format: 'text' },
+    { path: 'customer.phone', label: '联系电话', format: 'text' },
+    { path: 'items.name', label: '品名', format: 'text', collection: 'items' },
+    { path: 'items.quantity', label: '数量', format: 'number', collection: 'items' },
+    { path: 'items.price', label: '单价', format: 'number', collection: 'items' },
+    { path: 'items.amount', label: '金额', format: 'number', collection: 'items' },
+    { path: 'totalAmount', label: '总金额', format: 'number' },
+    { path: 'approver.name', label: '审批人', format: 'text' },
+];
+const keyOf = (r, c) => `${r}:${c}`;
+exports.keyOf = keyOf;
+// This project deliberately accepts JSON-only state. This also works on older CEF runtimes.
+function copy(value) {
+    // Strings are immutable. Avoid repeatedly serializing the retained source XLSX into undo snapshots.
+    if (Array.isArray(value))
+        return value.map(item => copy(item));
+    if (value !== null && typeof value === 'object')
+        return Object.fromEntries(Object.entries(value).filter(([, item]) => item !== undefined).map(([key, item]) => [key, copy(item)]));
+    return value;
+}
+function newDocument() {
+    return {
+        schemaVersion: 1, id: 'order-template', revision: 0, name: '业务单据模板',
+        sheetName: '单据', syntax: 'mustache', rows: 60, cols: 12,
+        rowHeightPx: Array(60).fill(32), colWidthPx: Array(12).fill(140),
+        cells: {}, merges: [], blocks: [],
+    };
+}
+const documentFields = (doc) => doc.fields ?? exports.FIELDS;
+exports.documentFields = documentFields;
+function fieldByPath(path, fields = exports.FIELDS) {
+    const field = fields.find(f => f.path === path);
+    if (!field)
+        throw new Error(`未授权或未知字段：${path}`);
+    return field;
+}
+function displayText(cell, syntax) {
+    if (!cell.binding)
+        return cell.text ?? '';
+    const path = cell.binding.path;
+    return syntax === 'mustache' ? `{{${path}}}` : '${' + path + '}';
+}
+const numberFormat = (cell) => cell.numFmt ?? (cell.binding?.format === 'number' ? '#,##0.00'
+    : cell.binding?.format === 'date' ? 'yyyy-mm-dd' : '@');
+exports.numberFormat = numberFormat;
+
+},
+"fields": function(module, exports, require) {
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.validPath = validPath;
+exports.validateFields = validateFields;
+exports.upsertField = upsertField;
+exports.removeField = removeField;
+exports.inferFields = inferFields;
+exports.addInferredFields = addInferredFields;
+exports.readPath = readPath;
+const model_ts_1 = require("./model.ts");
+function validPath(path) {
+    return typeof path === 'string' && path.length <= 180 && /^[A-Za-z_][\w]*(\.[A-Za-z_][\w]*)*$/.test(path)
+        && !path.split('.').some(p => ['__proto__', 'prototype', 'constructor'].includes(p));
+}
+function validateFields(fields) {
+    if (!Array.isArray(fields) || fields.length > 1000)
+        throw new Error('字段字典最多支持 1000 个字段');
+    const paths = new Set();
+    for (const field of fields) {
+        if (!field || !validPath(field.path))
+            throw new Error('字段路径须为英文属性路径，如 certificate.number；不允许特殊表达式');
+        if (paths.has(field.path))
+            throw new Error(`字段路径重复：${field.path}`);
+        paths.add(field.path);
+        if (typeof field.label !== 'string' || !field.label.trim() || field.label.length > 100)
+            throw new Error('字段名称不能为空且不能超过 100 字');
+        if (!['text', 'number', 'date'].includes(field.format))
+            throw new Error('不支持的字段类型');
+        if (field.collection && (!validPath(field.collection) || !field.path.startsWith(field.collection + '.')))
+            throw new Error(`字段 ${field.path} 必须位于所属集合 ${field.collection} 下`);
+        if (field.numberFormat && (typeof field.numberFormat !== 'string' || field.numberFormat.length > 100))
+            throw new Error('数字格式过长');
+    }
+}
+function upsertField(doc, field, oldPath) {
+    const fields = (0, model_ts_1.copy)((0, model_ts_1.documentFields)(doc));
+    if (oldPath && oldPath !== field.path && fields.some(f => f.path === field.path))
+        throw new Error('字段路径重复');
+    const index = oldPath ? fields.findIndex(f => f.path === oldPath) : -1;
+    if (!oldPath && fields.some(f => f.path === field.path))
+        throw new Error('字段路径重复');
+    if (oldPath && index < 0)
+        throw new Error('字段不存在');
+    if (index >= 0)
+        fields[index] = (0, model_ts_1.copy)(field);
+    else
+        fields.push((0, model_ts_1.copy)(field));
+    validateFields(fields);
+    doc.fields = fields;
+    for (const cell of Object.values(doc.cells))
+        if (oldPath && cell.binding?.path === oldPath) {
+            cell.binding = { path: field.path, format: field.format };
+            cell.numFmt = field.numberFormat;
+        }
+}
+function removeField(doc, path) {
+    if (Object.values(doc.cells).some(c => c.binding?.path === path))
+        throw new Error('该字段已绑定，请先解除相关单元格的绑定');
+    doc.fields = (0, model_ts_1.copy)((0, model_ts_1.documentFields)(doc).filter(f => f.path !== path));
+}
+/** Infer the union of all records, including nested collections and heterogeneous rows. */
+function inferFields(data) {
+    if (!data || typeof data !== 'object' || Array.isArray(data))
+        throw new Error('示例数据必须是 JSON 对象');
+    const found = new Map();
+    let visited = 0;
+    function walk(value, path, collection, depth = 0) {
+        if (++visited > 50000 || depth > 12)
+            throw new Error('示例数据层级或数量过大');
+        if (Array.isArray(value)) {
+            if (!value.length)
+                return;
+            for (const item of value) {
+                if (!item || typeof item !== 'object' || Array.isArray(item))
+                    throw new Error(`${path} 必须是对象数组；数值数组请改为 [{ "value": 1 }]`);
+                walk(item, path, path, depth + 1);
+            }
+        }
+        else if (value && typeof value === 'object') {
+            for (const [key, child] of Object.entries(value))
+                walk(child, path ? `${path}.${key}` : key, collection, depth + 1);
+        }
+        else if (path) {
+            const format = typeof value === 'number' ? 'number' : typeof value === 'string' && /^\d{4}-\d{2}-\d{2}(T.*)?$/.test(value) ? 'date' : 'text';
+            const existing = found.get(path);
+            if (!existing || (existing.example === '' && value != null))
+                found.set(path, {
+                    path, label: path.split('.').at(-1), format, collection, group: collection ?? '单值字段', example: value == null ? '' : String(value),
+                });
+            else if (value != null && existing.format !== format)
+                existing.format = 'text';
+        }
+    }
+    walk(data, '');
+    const result = [...found.values()];
+    validateFields(result);
+    return result;
+}
+function addInferredFields(doc, data) {
+    const fields = (0, model_ts_1.copy)((0, model_ts_1.documentFields)(doc));
+    let count = 0;
+    for (const field of inferFields(data))
+        if (!fields.some(f => f.path === field.path)) {
+            fields.push(field);
+            count++;
+        }
+    validateFields(fields);
+    doc.fields = fields;
+    return count;
+}
+function readPath(data, path) {
+    if (!path)
+        return data;
+    if (!validPath(path))
+        throw new Error(`非法数据路径：${path}`);
+    let current = data;
+    for (const part of path.split('.')) {
+        if (!current || typeof current !== 'object' || !Object.hasOwn(current, part))
+            return undefined;
+        current = current[part];
+    }
+    return current;
+}
+
+},
+"blocks": function(module, exports, require) {
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.BLOCKS = exports.CUSTOMER_BLOCK = exports.gridStyle = void 0;
+const edge = { style: 'thin', color: '#CBD5E1' };
+exports.gridStyle = {
+    fontFamily: 'Arial', fontSizePt: 11, vertical: 'middle', wrap: true,
+    borders: { top: edge, right: edge, bottom: edge, left: edge },
+};
+exports.CUSTOMER_BLOCK = {
+    schemaVersion: 1, id: 'customer-info', name: '客户信息（2行×4列）', rows: 2, cols: 4,
+    defaultStyle: exports.gridStyle, merges: [],
+    cells: [
+        { r: 0, c: 0, text: '客户名称', style: { background: '#EEF2F6', bold: true } },
+        { r: 0, c: 1, binding: { path: 'customer.name', format: 'text' } },
+        { r: 0, c: 2, text: '订单号', style: { background: '#EEF2F6', bold: true } },
+        { r: 0, c: 3, binding: { path: 'orderNo', format: 'text' } },
+        { r: 1, c: 0, text: '联系人', style: { background: '#EEF2F6', bold: true } },
+        { r: 1, c: 1, binding: { path: 'customer.contact', format: 'text' } },
+        { r: 1, c: 2, text: '联系电话', style: { background: '#EEF2F6', bold: true } },
+        { r: 1, c: 3, binding: { path: 'customer.phone', format: 'text' } },
+    ],
+};
+exports.BLOCKS = [
+    { schemaVersion: 1, id: 'title', name: '单据标题头', rows: 1, cols: 4,
+        defaultStyle: exports.gridStyle, merges: [{ r: 0, c: 0, rows: 1, cols: 4 }],
+        cells: [{ r: 0, c: 0, text: '销售订单', style: { horizontal: 'center', fontSizePt: 18, bold: true, background: '#E2E8F0' } }],
+    },
+    exports.CUSTOMER_BLOCK,
+    { schemaVersion: 1, id: 'items', name: '明细表格（整行扩展）', rows: 2, cols: 4,
+        defaultStyle: exports.gridStyle, merges: [],
+        repeat: { source: 'items', rowOffset: 1, rowCount: 1, mode: 'insert', empty: 'remove' },
+        cells: [
+            ...['品名', '数量', '单价', '金额'].map((text, c) => ({ r: 0, c, text, style: { background: '#EEF2F6', bold: true } })),
+            { r: 1, c: 0, binding: { path: 'items.name', format: 'text' } },
+            { r: 1, c: 1, binding: { path: 'items.quantity', format: 'number' } },
+            { r: 1, c: 2, binding: { path: 'items.price', format: 'number' } },
+            { r: 1, c: 3, binding: { path: 'items.amount', format: 'number' } },
+        ],
+    },
+    { schemaVersion: 1, id: 'approval', name: '审批汇总与签字栏', rows: 2, cols: 4,
+        defaultStyle: exports.gridStyle, merges: [{ r: 1, c: 1, rows: 1, cols: 3 }],
+        cells: [
+            { r: 0, c: 0, text: '合计金额' }, { r: 0, c: 1, binding: { path: 'totalAmount', format: 'number' } },
+            { r: 0, c: 2, text: '审批人' }, { r: 0, c: 3, binding: { path: 'approver.name', format: 'text' } },
+            { r: 1, c: 0, text: '签字' },
+        ],
+    },
+];
+
+},
+"operations": function(module, exports, require) {
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.assert = assert;
+exports.inside = inside;
+exports.intersects = intersects;
+exports.contains = contains;
+exports.eachCell = eachCell;
+exports.checkBounds = checkBounds;
+exports.anchor = anchor;
+exports.hasValue = hasValue;
+exports.validateBlock = validateBlock;
+exports.validateDocument = validateDocument;
+exports.placementError = placementError;
+exports.placeBlock = placeBlock;
+exports.bindField = bindField;
+exports.setText = setText;
+exports.styleRange = styleRange;
+exports.mergeRange = mergeRange;
+exports.unmergeRange = unmergeRange;
+exports.clearRange = clearRange;
+exports.removeBlock = removeBlock;
+exports.moveBlock = moveBlock;
+exports.transaction = transaction;
+exports.renderCells = renderCells;
+exports.a1 = a1;
+exports.metadata = metadata;
+const model_ts_1 = require("./model.ts");
+const fields_ts_1 = require("./fields.ts");
+function assert(condition, message) {
+    if (!condition)
+        throw new Error(message);
+}
+function inside(a, r, c) {
+    return r >= a.r && r < a.r + a.rows && c >= a.c && c < a.c + a.cols;
+}
+function intersects(a, b) {
+    return a.r < b.r + b.rows && b.r < a.r + a.rows &&
+        a.c < b.c + b.cols && b.c < a.c + a.cols;
+}
+function contains(a, b) {
+    return inside(a, b.r, b.c) && inside(a, b.r + b.rows - 1, b.c + b.cols - 1);
+}
+function eachCell(rect, fn) {
+    for (let r = rect.r; r < rect.r + rect.rows; r++)
+        for (let c = rect.c; c < rect.c + rect.cols; c++)
+            fn(r, c);
+}
+function checkBounds(rect, rows, cols) {
+    assert(Object.values(rect).every(Number.isInteger), '坐标与尺寸必须为整数');
+    assert(rect.r >= 0 && rect.c >= 0 && rect.rows > 0 && rect.cols > 0, '非法矩形');
+    assert(rect.r + rect.rows <= rows && rect.c + rect.cols <= cols, '放置区域超出画布');
+}
+function anchor(doc, r, c) {
+    const m = doc.merges.find(x => inside(x, r, c));
+    return m ? [m.r, m.c] : [r, c];
+}
+function hasValue(cell) {
+    return !!cell && (cell.binding !== undefined || (cell.text !== undefined && cell.text !== ''));
+}
+function checkStyle(style) {
+    if (!style)
+        return;
+    const color = /^#[0-9a-f]{6}$/i;
+    for (const v of [style.color, style.background])
+        assert(v === undefined || color.test(v), '颜色必须为 #RRGGBB');
+    assert(style.fontSizePt === undefined || (Number.isFinite(style.fontSizePt) &&
+        style.fontSizePt >= 6 && style.fontSizePt <= 72), '字号应为 6–72 pt');
+    assert(style.horizontal === undefined || ['left', 'center', 'right'].includes(style.horizontal), '非法水平对齐');
+    assert(style.vertical === undefined || ['top', 'middle', 'bottom'].includes(style.vertical), '非法垂直对齐');
+    for (const edge of Object.values(style.borders ?? {})) {
+        assert(color.test(edge.color), '非法边框颜色');
+        assert(['thin', 'medium', 'dashed'].includes(edge.style), '非法边框样式');
+    }
+}
+function checkCell(cell, fields) {
+    assert(!(cell.text !== undefined && cell.binding !== undefined), '文本和绑定不能同时存在');
+    assert(cell.text === undefined || (typeof cell.text === 'string' && cell.text.length <= 32767), '单元格文本过长');
+    assert(cell.excelValue !== undefined || cell.text === undefined || (!cell.text.includes('{{') && !cell.text.includes('${')), '占位符须通过字段绑定生成；示例不支持在静态文本中手写表达式');
+    if (cell.binding) {
+        (0, model_ts_1.fieldByPath)(cell.binding.path, fields);
+        assert(['text', 'number', 'date'].includes(cell.binding.format), '未知数据格式');
+    }
+    checkStyle(cell.style);
+}
+function repeatRect(block) {
+    if (!block.repeat)
+        return;
+    return { r: block.rect.r + block.repeat.rowOffset, c: block.rect.c,
+        rows: block.repeat.rowCount, cols: block.rect.cols };
+}
+function checkFieldScope(doc, r, c, binding) {
+    const field = (0, model_ts_1.fieldByPath)(binding.path, (0, model_ts_1.documentFields)(doc));
+    if (!field.collection)
+        return;
+    assert(doc.blocks.some(block => {
+        const band = repeatRect(block);
+        return band && block.repeat?.source === field.collection && inside(band, r, c);
+    }) || (doc.repeatRegions ?? []).some(region => region.source === field.collection && inside(region.rect, r, c)), `明细字段 ${binding.path} 必须放在 ${field.collection} 的重复区域内，请先设置明细区域`);
+}
+function validateBlock(block) {
+    assert(block.schemaVersion === 1, '不支持的积木版本');
+    // Product limit, not an Excel/Univer limit.
+    checkBounds({ r: 0, c: 0, rows: block.rows, cols: block.cols }, 200, 50);
+    assert(block.id.length > 0 && block.name.length > 0, '积木必须有 id 和名称');
+    checkStyle(block.defaultStyle);
+    const seen = new Set();
+    for (const cell of block.cells) {
+        checkBounds({ r: cell.r, c: cell.c, rows: 1, cols: 1 }, block.rows, block.cols);
+        const key = (0, model_ts_1.keyOf)(cell.r, cell.c);
+        assert(!seen.has(key), '积木内存在重复单元格坐标');
+        seen.add(key);
+        checkCell(cell);
+        assert(cell.owner === undefined, '预制积木不得携带实例 owner');
+    }
+    for (let i = 0; i < block.merges.length; i++) {
+        const m = block.merges[i];
+        checkBounds(m, block.rows, block.cols);
+        assert(m.rows * m.cols > 1, '不能合并单个单元格');
+        assert(!block.merges.slice(i + 1).some(n => intersects(m, n)), '积木合并区域重叠');
+        for (const cell of block.cells)
+            if (inside(m, cell.r, cell.c) && (cell.r !== m.r || cell.c !== m.c))
+                assert(!hasValue(cell), '合并从属格不能存放内容');
+    }
+    if (block.repeat) {
+        const p = block.repeat;
+        checkBounds({ r: p.rowOffset, c: 0, rows: p.rowCount, cols: block.cols }, block.rows, block.cols);
+        assert(p.mode === 'insert' && ['remove', 'keep'].includes(p.empty), '不支持的重复策略');
+        assert(['items'].includes(p.source), '未知明细数据源');
+    }
+}
+function validateDocument(doc) {
+    assert(doc && typeof doc === 'object' && doc.cells && Array.isArray(doc.merges) && Array.isArray(doc.blocks), '模板文档结构不完整');
+    (0, fields_ts_1.validateFields)((0, model_ts_1.documentFields)(doc));
+    assert(doc.schemaVersion === 1, '不支持的模板版本');
+    assert(Number.isInteger(doc.revision) && doc.revision >= 0, '非法模板修订号');
+    assert(doc.syntax === 'mustache' || doc.syntax === 'dollar', '不支持的占位符语法');
+    assert(doc.sheetName.length > 0 && doc.sheetName.length <= 31 &&
+        !/[\\/*?:\[\]]/.test(doc.sheetName), '非法工作表名称');
+    checkBounds({ r: 0, c: 0, rows: doc.rows, cols: doc.cols }, 10000, 200);
+    assert(doc.rows * doc.cols <= 500000, '模板超过 500000 个单元格');
+    assert(doc.rowHeightPx.length === doc.rows && doc.colWidthPx.length === doc.cols, '行列尺寸数量不匹配');
+    assert(doc.rowHeightPx.every(v => Number.isFinite(v) && v > 0 && v <= 1000), '行高应大于 0 且不超过 1000 px');
+    assert(doc.colWidthPx.every(v => Number.isFinite(v) && v > 0 && v <= 2000), '列宽应大于 0 且不超过 2000 px');
+    const regions = doc.repeatRegions ?? [];
+    assert(Array.isArray(regions) && regions.length <= 100, '明细区域最多支持 100 个');
+    const regionIds = new Set();
+    const ancestorIds = (id) => {
+        const seen = [];
+        while (id) {
+            assert(!seen.includes(id), '明细区域父子关系存在循环');
+            seen.push(id);
+            const region = regions.find(x => x.id === id);
+            assert(region, '父明细区域不存在');
+            id = region.parentId;
+        }
+        assert(seen.length <= 8, '明细区域嵌套最多 8 层');
+        return seen;
+    };
+    for (const region of regions) {
+        assert(region.id && !regionIds.has(region.id), '明细区域 id 重复或为空');
+        regionIds.add(region.id);
+        assert(region.name?.trim() && (0, fields_ts_1.validPath)(region.source), '请填写明细名称和合法数据源');
+        assert(['keep', 'remove'].includes(region.empty), '非法空数据策略');
+        checkBounds(region.rect, doc.rows, doc.cols);
+        ancestorIds(region.id);
+        if (region.parentId) {
+            const parent = regions.find(x => x.id === region.parentId);
+            assert(contains(parent.rect, region.rect), '子明细区域必须位于父区域内');
+            assert(region.source.startsWith(parent.source + '.'), '子明细数据源必须属于父集合');
+        }
+        for (const m of doc.merges) {
+            const band = { ...region.rect, c: 0, cols: doc.cols };
+            if (intersects(m, band))
+                assert(contains(band, m) || (region.parentId &&
+                    m.r <= band.r && m.r + m.rows >= band.r + band.rows && !intersects(m, region.rect)), '合并不能跨越明细样板行边界，请将整组合并行纳入样板');
+        }
+    }
+    for (let i = 0; i < regions.length; i++)
+        for (let j = i + 1; j < regions.length; j++) {
+            const a = regions[i], b = regions[j];
+            if (a.rect.r < b.rect.r + b.rect.rows && b.rect.r < a.rect.r + a.rect.rows)
+                assert(ancestorIds(a.parentId).includes(b.id) || ancestorIds(b.parentId).includes(a.id), '同行的明细请放在同一区域；独立明细区域不能纵向重叠');
+        }
+    const ids = new Set();
+    for (let i = 0; i < doc.blocks.length; i++) {
+        const b = doc.blocks[i];
+        assert(!ids.has(b.id), '重复积木实例 id');
+        ids.add(b.id);
+        checkBounds(b.rect, doc.rows, doc.cols);
+        assert(!doc.blocks.slice(i + 1).some(n => intersects(b.rect, n.rect)), '积木实例区域重叠');
+        const band = repeatRect(b);
+        if (band) {
+            checkBounds(band, doc.rows, doc.cols);
+            assert(contains(b.rect, band), '明细重复区域必须位于积木内');
+            assert(b.repeat?.mode === 'insert' && ['remove', 'keep'].includes(b.repeat.empty), '不支持的重复策略');
+            assert(b.repeat?.source === 'items', '未知明细数据源');
+        }
+        eachCell(b.rect, (r, c) => assert(doc.cells[(0, model_ts_1.keyOf)(r, c)]?.owner === b.id, '积木占位信息不完整'));
+    }
+    for (const [key, cell] of Object.entries(doc.cells)) {
+        assert(/^\d+:\d+$/.test(key), '非法单元格键');
+        const [r, c] = key.split(':').map(Number);
+        assert(key === (0, model_ts_1.keyOf)(r, c), '单元格键必须使用规范坐标');
+        checkBounds({ r, c, rows: 1, cols: 1 }, doc.rows, doc.cols);
+        checkCell(cell, (0, model_ts_1.documentFields)(doc));
+        if (cell.owner)
+            assert(doc.blocks.some(b => b.id === cell.owner && inside(b.rect, r, c)), '悬空积木引用');
+        if (cell.binding)
+            checkFieldScope(doc, r, c, cell.binding);
+    }
+    for (let i = 0; i < doc.merges.length; i++) {
+        const m = doc.merges[i];
+        checkBounds(m, doc.rows, doc.cols);
+        assert(m.rows * m.cols > 1, '不能合并单个单元格');
+        assert(!doc.merges.slice(i + 1).some(n => intersects(m, n)), '合并区域重叠');
+        const owners = new Set();
+        eachCell(m, (r, c) => {
+            const cell = doc.cells[(0, model_ts_1.keyOf)(r, c)];
+            owners.add(cell?.owner ?? '');
+            if (r !== m.r || c !== m.c)
+                assert(!hasValue(cell), '合并从属格不能存放内容');
+        });
+        assert(owners.size <= 1, '禁止跨积木边界合并');
+        for (const b of doc.blocks) {
+            const band = repeatRect(b);
+            if (band && intersects(m, band))
+                assert(contains(band, m), '合并不能跨越明细重复单元边界');
+        }
+    }
+    // This MVP uses full-row expansion. Parallel repeat regions on the same rows
+    // would shift each other, so reject them rather than export ambiguous metadata.
+    const bands = doc.blocks.map(repeatRect).filter((x) => !!x);
+    for (let i = 0; i < bands.length; i++)
+        for (let j = i + 1; j < bands.length; j++)
+            assert(bands[i].r + bands[i].rows <= bands[j].r || bands[j].r + bands[j].rows <= bands[i].r, '整行扩展模式不支持纵向重叠的两个明细区域');
+}
+function placementError(doc, block, r, c) {
+    try {
+        validateBlock(block);
+        const rect = { r, c, rows: block.rows, cols: block.cols };
+        checkBounds(rect, doc.rows, doc.cols);
+        assert(!doc.merges.some(m => intersects(m, rect)), '目标区域与合并单元格相交');
+        assert(!doc.blocks.some(b => intersects(b.rect, rect)), '目标区域已有积木');
+        eachCell(rect, (rr, cc) => assert(doc.cells[(0, model_ts_1.keyOf)(rr, cc)] === undefined, '目标区域存在内容、样式或保留占位'));
+        return null;
+    }
+    catch (e) {
+        return e instanceof Error ? e.message : String(e);
+    }
+}
+function placeBlock(doc, block, r, c, instanceId) {
+    const error = placementError(doc, block, r, c);
+    assert(error === null, error ?? '无法放置');
+    assert(instanceId.length > 0 && !doc.blocks.some(b => b.id === instanceId), '非法或重复实例 id');
+    const rect = { r, c, rows: block.rows, cols: block.cols };
+    // Reserve the WHOLE bounding box, including blank cells.
+    eachCell(rect, (rr, cc) => { doc.cells[(0, model_ts_1.keyOf)(rr, cc)] = { owner: instanceId, style: (0, model_ts_1.copy)(block.defaultStyle ?? {}) }; });
+    for (const cell of block.cells) {
+        const { r: dr, c: dc, ...data } = (0, model_ts_1.copy)(cell);
+        doc.cells[(0, model_ts_1.keyOf)(r + dr, c + dc)] = {
+            ...data, owner: instanceId, style: { ...(0, model_ts_1.copy)(block.defaultStyle ?? {}), ...data.style },
+        };
+    }
+    doc.merges.push(...block.merges.map(m => ({ ...m, r: r + m.r, c: c + m.c })));
+    doc.blocks.push({ id: instanceId, definitionId: block.id, rect, ...(block.repeat ? { repeat: (0, model_ts_1.copy)(block.repeat) } : {}) });
+}
+function bindField(doc, r, c, path, replace = false) {
+    checkBounds({ r, c, rows: 1, cols: 1 }, doc.rows, doc.cols);
+    [r, c] = anchor(doc, r, c);
+    const previous = doc.cells[(0, model_ts_1.keyOf)(r, c)] ?? {};
+    assert(replace || !hasValue(previous), '单元格已有内容；请从右侧属性面板明确替换');
+    const field = (0, model_ts_1.fieldByPath)(path, (0, model_ts_1.documentFields)(doc));
+    const binding = { path, format: field.format };
+    checkFieldScope(doc, r, c, binding);
+    const next = { ...previous, binding };
+    delete next.text;
+    delete next.excelValue;
+    next.numFmt = field.numberFormat ?? (previous.numFmt === 'General' ? undefined : previous.numFmt);
+    doc.cells[(0, model_ts_1.keyOf)(r, c)] = next;
+}
+function setText(doc, r, c, text) {
+    checkBounds({ r, c, rows: 1, cols: 1 }, doc.rows, doc.cols);
+    [r, c] = anchor(doc, r, c);
+    const next = { ...doc.cells[(0, model_ts_1.keyOf)(r, c)], text };
+    delete next.binding;
+    delete next.excelValue;
+    doc.cells[(0, model_ts_1.keyOf)(r, c)] = next;
+}
+function styleRange(doc, rect, patch) {
+    checkBounds(rect, doc.rows, doc.cols);
+    checkStyle(patch);
+    const anchors = new Set();
+    eachCell(rect, (r, c) => { const [rr, cc] = anchor(doc, r, c); anchors.add((0, model_ts_1.keyOf)(rr, cc)); });
+    for (const key of anchors) {
+        const cell = doc.cells[key] ?? {};
+        doc.cells[key] = { ...cell, style: { ...cell.style, ...(0, model_ts_1.copy)(patch) }, ...(cell.excelStyle ? { styleEdits: { ...cell.styleEdits, ...(0, model_ts_1.copy)(patch) } } : {}) };
+    }
+}
+function mergeRange(doc, rect) {
+    checkBounds(rect, doc.rows, doc.cols);
+    assert(rect.rows * rect.cols > 1, '请先选择多个单元格');
+    assert(!doc.merges.some(m => intersects(m, rect)), '请先取消相交区域的合并');
+    eachCell(rect, (r, c) => {
+        if (r !== rect.r || c !== rect.c)
+            assert(!hasValue(doc.cells[(0, model_ts_1.keyOf)(r, c)]), '合并会丢失其他单元格内容，已拒绝');
+    });
+    doc.merges.push((0, model_ts_1.copy)(rect));
+    // Whole-document semantic checks run before the transaction commits.
+}
+function unmergeRange(doc, rect) {
+    doc.merges = doc.merges.filter(m => !intersects(m, rect));
+}
+function clearRange(doc, rect) {
+    checkBounds(rect, doc.rows, doc.cols);
+    assert(!doc.blocks.some(b => intersects(b.rect, rect)), '积木内单元格不能单独清除占位，请删除整个积木');
+    for (const merge of doc.merges)
+        if (intersects(merge, rect))
+            assert(contains(rect, merge), '请完整选中合并区域后清除');
+    doc.merges = doc.merges.filter(m => !intersects(m, rect));
+    eachCell(rect, (r, c) => { delete doc.cells[(0, model_ts_1.keyOf)(r, c)]; });
+}
+function removeBlock(doc, id) {
+    const block = doc.blocks.find(b => b.id === id);
+    assert(block, '找不到积木');
+    for (const [key, cell] of Object.entries(doc.cells))
+        if (cell.owner === id)
+            delete doc.cells[key];
+    doc.merges = doc.merges.filter(m => !intersects(m, block.rect));
+    doc.blocks = doc.blocks.filter(b => b.id !== id);
+}
+function moveBlock(doc, id, r, c) {
+    const found = doc.blocks.find(b => b.id === id);
+    assert(found, '找不到积木');
+    const block = (0, model_ts_1.copy)(found);
+    const cells = Object.entries(doc.cells).filter(([, cell]) => cell.owner === id).map(([key, cell]) => {
+        const [rr, cc] = key.split(':').map(Number);
+        const data = (0, model_ts_1.copy)(cell);
+        delete data.owner;
+        return { ...data, r: rr - block.rect.r, c: cc - block.rect.c };
+    });
+    const definition = {
+        schemaVersion: 1, id: block.definitionId, name: '移动积木',
+        rows: block.rect.rows, cols: block.rect.cols, cells,
+        merges: doc.merges.filter(m => contains(block.rect, m)).map(m => ({ ...m, r: m.r - block.rect.r, c: m.c - block.rect.c })),
+        ...(block.repeat ? { repeat: block.repeat } : {}),
+    };
+    // Call only within transaction(): failed placement leaves original document intact.
+    removeBlock(doc, id);
+    placeBlock(doc, definition, r, c, id);
+}
+function transaction(doc, change) {
+    const draft = (0, model_ts_1.copy)(doc);
+    change(draft);
+    draft.revision = doc.revision + 1;
+    validateDocument(draft);
+    return draft;
+}
+// Normalizes merged cells for BOTH Univer and ExcelJS. Only the anchor has content;
+// font/fill/alignment are uniform, and borders only appear on the merged perimeter.
+function renderCells(doc) {
+    const result = (0, model_ts_1.copy)(doc.cells);
+    for (const m of doc.merges) {
+        const master = result[(0, model_ts_1.keyOf)(m.r, m.c)] ?? {};
+        const base = (0, model_ts_1.copy)(master.style ?? {});
+        const edges = base.borders ?? {};
+        eachCell(m, (r, c) => {
+            const borders = {};
+            if (r === m.r && edges.top)
+                borders.top = edges.top;
+            if (r === m.r + m.rows - 1 && edges.bottom)
+                borders.bottom = edges.bottom;
+            if (c === m.c && edges.left)
+                borders.left = edges.left;
+            if (c === m.c + m.cols - 1 && edges.right)
+                borders.right = edges.right;
+            const cell = result[(0, model_ts_1.keyOf)(r, c)] ?? {};
+            result[(0, model_ts_1.keyOf)(r, c)] = { ...cell, style: { ...(0, model_ts_1.copy)(base), borders: (0, model_ts_1.copy)(borders) },
+                ...(master.styleEdits ? { styleEdits: { ...(0, model_ts_1.copy)(master.styleEdits),
+                        ...(master.styleEdits.borders ? { borders: (0, model_ts_1.copy)(borders) } : {}) } } : {}) };
+        });
+    }
+    return result;
+}
+function a1(r, c) {
+    let letters = '';
+    for (let n = c + 1; n > 0; n = Math.floor((n - 1) / 26))
+        letters = String.fromCharCode(65 + (n - 1) % 26) + letters;
+    return `${letters}${r + 1}`;
+}
+function metadata(doc) {
+    return {
+        schemaVersion: doc.schemaVersion, templateId: doc.id, revision: doc.revision,
+        syntax: doc.syntax, sheetName: doc.sheetName, fields: (0, model_ts_1.copy)((0, model_ts_1.documentFields)(doc)),
+        bindings: Object.entries(doc.cells).filter(([, cell]) => cell.binding).map(([key, cell]) => {
+            const [r, c] = key.split(':').map(Number);
+            return { address: a1(r, c), ...cell.binding, placeholder: (0, model_ts_1.displayText)(cell, doc.syntax) };
+        }),
+        repeats: [...doc.blocks.filter(b => b.repeat).map(b => ({
+                blockId: b.id, source: b.repeat.source, ...repeatRect(b),
+                coordinateBase: 0, axis: 'row', mode: 'insert', empty: b.repeat.empty,
+            })), ...(doc.repeatRegions ?? []).map(region => ({
+                regionId: region.id, name: region.name, source: region.source, parentId: region.parentId,
+                ...region.rect, coordinateBase: 0, axis: 'row', mode: 'insert', empty: region.empty,
+            }))],
+    };
+}
+
+},
+"demo": function(module, exports, require) {
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.createDemoDocument = createDemoDocument;
+const model_ts_1 = require("./model.ts");
+const blocks_ts_1 = require("./blocks.ts");
+const operations_ts_1 = require("./operations.ts");
+/** Deterministic example shared by the full Vue app and the dependency-free preview. */
+function createDemoDocument() {
+    return (0, operations_ts_1.transaction)((0, model_ts_1.newDocument)(), draft => {
+        draft.name = '销售订单模板';
+        draft.colWidthPx = Array(draft.cols).fill(174);
+        draft.rowHeightPx[0] = 48;
+        for (const [id, r, c] of [
+            ['title', 0, 0], ['customer-info', 2, 0], ['items', 5, 0], ['approval', 8, 0],
+        ]) {
+            const block = blocks_ts_1.BLOCKS.find(value => value.id === id);
+            if (!block)
+                throw new Error(`缺少示例积木：${id}`);
+            (0, operations_ts_1.placeBlock)(draft, block, r, c, `demo-${id}`);
+        }
+    });
+}
+
+}};
+const cache=Object.create(null);
+function load(id){id=id.replace(/^\.\//,'').replace(/\.ts$/,'');if(cache[id])return cache[id].exports;if(!modules[id])throw new Error('Unknown module '+id);const m={exports:{}};cache[id]=m;modules[id](m,m.exports,load);return m.exports;}
+const model=load('model'),ops=load('operations'),blocks=load('blocks'),demo=load('demo');
+// Optional dependency-free UI. The model/ops/blocks/demo variables are the exact
+// transpiled modules from src/domain, injected by build-offline-preview.mjs.
+const $ = id => document.getElementById(id);
+const { BLOCKS, gridStyle } = blocks;
+let doc = demo.createDemoDocument();
+let selection = { r: 0, c: 0, rows: 1, cols: 4 };
+let selectionOrigin = { r: 0, c: 0 };
+const past = [], future = [];
+let dragging, lastHover = '', idCounter = 0;
+const MIME = 'application/x-report-designer';
+function uid() { return globalThis.crypto?.randomUUID?.() ?? `preview-${Date.now()}-${++idCounter}`; }
+function selectedCell() {
+  const [r,c] = ops.anchor(doc, selection.r, selection.c);
+  return doc.cells[model.keyOf(r,c)];
+}
+function selectedBlock() { return doc.blocks.find(b => ops.inside(b.rect, selection.r, selection.c)); }
+function address(rect = selection) {
+  const first = ops.a1(rect.r, rect.c);
+  return rect.rows * rect.cols > 1 ? `${first}:${ops.a1(rect.r+rect.rows-1, rect.c+rect.cols-1)}` : first;
+}
+function status(text, error = false) {
+  $('status').textContent = text;
+  $('status').style.color = error ? '#b55f59' : '';
+  $('status-dot').style.background = error ? '#c07870' : '';
+}
+function safely(action) {
+  try { action(); } catch(error) { status(error instanceof Error ? error.message : String(error), true); }
+}
+function commit(change, message = '已更新模板。') {
+  const next = ops.transaction(doc, change);
+  past.push(model.copy(doc)); if (past.length > 100) past.shift();
+  future.length = 0; doc = next;
+  render(); status(message);
+}
+function changeDocument(next, message) {
+  commit(draft => {
+    const revision = draft.revision;
+    Object.assign(draft, model.copy(next), { revision });
+  }, message);
+}
+function choose(rect, setOrigin = true) {
+  ops.checkBounds(rect, doc.rows, doc.cols); selection = model.copy(rect);
+  if (setOrigin) selectionOrigin = { r: rect.r, c: rect.c };
+  paintSelection(); renderProperties();
+}
+function paintSelection() {
+  for (const td of $('grid').querySelectorAll('td')) {
+    const r = Number(td.dataset.r), c = Number(td.dataset.c);
+    const rect = { r, c, rows: td.rowSpan, cols: td.colSpan };
+    td.classList.toggle('selection-area', ops.intersects(rect, selection));
+    td.classList.toggle('selected', r === selection.r && c === selection.c);
+  }
+}
+function textElement(tag, text, className) {
+  const el = document.createElement(tag); el.textContent = text;
+  if (className) el.className = className;
+  return el;
+}
+const icons = ['▤', '▦', '☷', '✓'];
+for (let i=0; i<BLOCKS.length; i++) {
+  const b = BLOCKS[i];
+  const card = document.createElement('div'); card.className='material'; card.draggable=true;
+  card.dataset.kind='block';card.dataset.id=b.id;card.tabIndex=0;
+  const compactName = b.name.replace(/（.*?）/g,'');
+  card.append(textElement('span',icons[i],'material-icon'));
+  const body=document.createElement('div');body.append(textElement('strong',compactName), textElement('small',`${b.rows} 行 × ${b.cols} 列${b.repeat ? ' · 可扩展' : ''}`));
+  card.append(body,textElement('span','⠿','grip'));$('materials').append(card);
+  card.addEventListener('dblclick',()=>safely(()=>dropPayload({version:1,kind:'block',id:b.id}, selection.r,selection.c)));
+  card.addEventListener('keydown',e=>{if(e.key==='Enter')safely(()=>dropPayload({version:1,kind:'block',id:b.id},selection.r,selection.c));});
+}
+$('binding').append(new Option('静态文本 / 无绑定', ''));
+for (const f of model.FIELDS) {
+  const tag=document.createElement('div');tag.className='field';tag.draggable=true;
+  tag.dataset.kind='field';tag.dataset.id=f.path;
+  tag.append(textElement('i','{ }'));
+  const body=document.createElement('div');body.append(textElement('strong',f.label),textElement('small',f.path));
+  tag.append(body);$('fields').append(tag);
+  $('binding').append(new Option(`${f.label} · ${f.path}`, f.path));
+}
+$('search').addEventListener('input', e => {
+  const query=e.target.value.trim().toLowerCase();
+  for(const el of document.querySelectorAll('.material,.field')) el.hidden=!el.textContent.toLowerCase().includes(query);
+});
+function renderGrid() {
+  const table=$('grid'), fragment=document.createDocumentFragment();
+  const colgroup=document.createElement('colgroup');
+  const numberCol=document.createElement('col');numberCol.style.width='39px';colgroup.append(numberCol);
+  for (const width of doc.colWidthPx) {const col=document.createElement('col');col.style.width=`${width}px`;colgroup.append(col);}
+  fragment.append(colgroup);
+  const thead=document.createElement('thead'), tr=document.createElement('tr');
+  tr.append(textElement('th','◢','corner'));
+  for(let c=0;c<doc.cols;c++)tr.append(textElement('th',ops.a1(0,c).replace(/\d+$/,'')));
+  thead.append(tr);fragment.append(thead);
+  const tbody=document.createElement('tbody');
+  for(let r=0;r<doc.rows;r++) {
+    const row=document.createElement('tr'); row.style.height=`${doc.rowHeightPx[r]}px`;
+    row.append(textElement('th',String(r+1),'row-head'));
+    for(let c=0;c<doc.cols;c++) {
+      const [ar,ac]=ops.anchor(doc,r,c);if(ar!==r||ac!==c)continue;
+      const td=document.createElement('td');td.dataset.r=String(r);td.dataset.c=String(c);
+      const cell=doc.cells[model.keyOf(r,c)], s=cell?.style??{};
+      const merge=doc.merges.find(m=>m.r===r&&m.c===c);
+      if(merge){td.rowSpan=merge.rows;td.colSpan=merge.cols;}
+      // CSS uses a single merged TD; its style comes from the same domain master cell.
+      td.style.height=`${doc.rowHeightPx.slice(r,r+(merge?.rows??1)).reduce((a,b)=>a+b,0)}px`;
+      if(s.background)td.style.backgroundColor=s.background;
+      td.style.textAlign=s.horizontal??'left';td.style.verticalAlign=s.vertical??'middle';
+      if(s.color)td.style.color=s.color;if(s.bold)td.style.fontWeight='700';
+      td.style.fontSize=`${s.fontSizePt??11}pt`;
+      if(s.fontFamily)td.style.fontFamily=s.fontFamily;
+      for(const [side,edge] of Object.entries(s.borders??{})) {
+        td.style[`border${side[0].toUpperCase()+side.slice(1)}`]=`${edge.style==='medium'?2:1}px ${edge.style==='dashed'?'dashed':'solid'} ${edge.color}`;
+      }
+      const content=textElement('div',cell?model.displayText(cell,doc.syntax):'','cell-content');
+      if(s.wrap===false)content.style.whiteSpace='nowrap';
+      td.append(content);td.classList.toggle('has-binding',!!cell?.binding);
+      td.title=`${ops.a1(r,c)}${cell?' · '+model.displayText(cell,doc.syntax):''}`;
+      row.append(td);
+    }
+    tbody.append(row);
+  }
+  fragment.append(tbody);
+  table.style.width=`${39+doc.colWidthPx.reduce((a,b)=>a+b,0)}px`;
+  table.replaceChildren(fragment);paintSelection();
+}
+function renderProperties() {
+  const cell=selectedCell(), s=cell?.style??{}, b=selectedBlock();
+  const a=address();$('address').textContent=a;$('selection-chip').textContent=a;
+  $('selection-size').textContent=`${selection.rows} 行 × ${selection.cols} 列${b?' · 业务积木':' · 独立区域'}`;
+  $('formula-value').textContent=cell?model.displayText(cell,doc.syntax):'选择单元格，设置内容或业务字段';
+  $('formula-type').textContent=cell?.binding?'业务占位符':cell?.text?'静态文本':'';
+  $('binding').value=cell?.binding?.path??'';$('cell-text').value=cell?.text??'';
+  $('format').value=cell?.binding?.format??'text';$('format').disabled=!cell?.binding;
+  $('align').value=s.horizontal??'left';$('background').value=s.background??'#ffffff';
+  $('font-size').value=s.fontSizePt??11;$('row-height').value=doc.rowHeightPx[selection.r];
+  $('col-width').value=doc.colWidthPx[selection.c];
+  $('block-properties').hidden=!b;
+  if(b){
+    $('block-name').textContent=BLOCKS.find(x=>x.id===b.definitionId)?.name??b.definitionId;
+    $('move-handle').dataset.kind='move';$('move-handle').dataset.id=b.id;
+    $('repeat-source').value=b.repeat?.source??'';$('repeat-offset').value=b.repeat?.rowOffset??0;
+    $('repeat-count').value=b.repeat?.rowCount??1;$('repeat-empty').value=b.repeat?.empty??'remove';
+    $('repeat-offset').max=b.rect.rows-1;$('repeat-count').max=b.rect.rows;
+  }
+}
+function render(){
+  renderGrid();renderProperties();$('doc-name').textContent=doc.name;
+  $('dimensions').textContent=`${doc.rows} 行 × ${doc.cols} 列`;
+  $('counts').textContent=`${doc.blocks.length} 个积木 · ${Object.values(doc.cells).filter(c=>c.binding).length} 个绑定`;
+  $('revision').textContent=`rev ${doc.revision}`;$('undo').disabled=!past.length;$('redo').disabled=!future.length;
+}
+$('grid').addEventListener('click',e=>{
+  const td=e.target.closest('td');if(!td)return;
+  const r=Number(td.dataset.r),c=Number(td.dataset.c);
+  if(e.shiftKey){
+    choose({r:Math.min(r,selectionOrigin.r),c:Math.min(c,selectionOrigin.c),rows:Math.abs(r-selectionOrigin.r)+1,cols:Math.abs(c-selectionOrigin.c)+1},false);
+  }else choose({r,c,rows:td.rowSpan,cols:td.colSpan});
+});
+$('grid').addEventListener('dblclick',e=>{if(e.target.closest('td')){$('cell-text').focus();$('cell-text').select();}});
+function payloadFromText(text){
+  if(!text||text.length>512)throw new Error('非法拖放数据');
+  const p=JSON.parse(text);
+  if(!p||p.version!==1||typeof p.id!=='string'||!['block','field','move'].includes(p.kind))throw new Error('不支持的拖放数据');
+  if(p.kind==='block'&&!BLOCKS.some(b=>b.id===p.id))throw new Error('未知积木');
+  if(p.kind==='field'&&!model.FIELDS.some(f=>f.path===p.id))throw new Error('未知业务字段');
+  if(p.kind==='move'&&!doc.blocks.some(b=>b.id===p.id))throw new Error('积木已不存在');
+  return p;
+}
+function targetRect(p,r,c){
+  if(p.kind==='block'){const b=BLOCKS.find(b=>b.id===p.id);return{r,c,rows:b.rows,cols:b.cols};}
+  if(p.kind==='move'){const b=doc.blocks.find(b=>b.id===p.id);return{...b.rect,r,c};}
+  return doc.merges.find(m=>ops.inside(m,r,c))??{r,c,rows:1,cols:1};
+}
+function applyPayload(draft,p,r,c,id){
+  if(p.kind==='block')ops.placeBlock(draft,BLOCKS.find(b=>b.id===p.id),r,c,id);
+  else if(p.kind==='field')ops.bindField(draft,r,c,p.id);
+  else ops.moveBlock(draft,p.id,r,c);
+}
+function dropPayload(p,r,c){
+  const rect=targetRect(p,r,c);
+  commit(draft=>applyPayload(draft,p,r,c,uid()),`已放置到 ${ops.a1(r,c)}。`);
+  choose(rect);clearHover();
+}
+function clearHover(){
+  for(const td of $('grid').querySelectorAll('.hover-good,.hover-bad'))td.classList.remove('hover-good','hover-bad');
+  lastHover='';
+}
+document.addEventListener('dragstart',e=>{
+  const source=e.target.closest('[draggable=true][data-kind]');if(!source||!e.dataTransfer)return;
+  dragging={version:1,kind:source.dataset.kind,id:source.dataset.id};
+  e.dataTransfer.setData(MIME,JSON.stringify(dragging));e.dataTransfer.effectAllowed=dragging.kind==='move'?'move':'copy';
+});
+document.addEventListener('dragend',()=>{dragging=undefined;clearHover();});
+$('grid').addEventListener('dragover',e=>{
+  if(!dragging||!e.dataTransfer)return;
+  const td=e.target.closest('td');if(!td)return;e.preventDefault();
+  const r=Number(td.dataset.r),c=Number(td.dataset.c),key=`${doc.revision}:${r}:${c}:${dragging.kind}:${dragging.id}`;
+  // Keep drop deliverable even on an invalid target so that the user gets the exact error.
+  e.dataTransfer.dropEffect=dragging.kind==='move'?'move':'copy';
+  if(key===lastHover)return;clearHover();lastHover=key;
+  let error='';try{ops.transaction(doc,d=>applyPayload(d,dragging,r,c,'__offline_hover__'));}catch(err){error=err.message;}
+  const target=targetRect(dragging,r,c);
+  for(const cell of $('grid').querySelectorAll('td')){
+    const rect={r:Number(cell.dataset.r),c:Number(cell.dataset.c),rows:cell.rowSpan,cols:cell.colSpan};
+    if(ops.intersects(rect,target))cell.classList.add(error?'hover-bad':'hover-good');
+  }
+  status(error||`释放到 ${ops.a1(r,c)}`,!!error);
+});
+$('grid').addEventListener('drop',e=>{
+  if(!e.dataTransfer?.types.includes(MIME))return;e.preventDefault();
+  const td=e.target.closest('td');if(!td)return;
+  safely(()=>dropPayload(payloadFromText(e.dataTransfer.getData(MIME)),Number(td.dataset.r),Number(td.dataset.c)));
+  dragging=undefined;clearHover();
+});
+function on(id,action){$(id).addEventListener('click',()=>safely(action));}
+on('undo',()=>{if(!past.length)return;future.push(model.copy(doc));const prev=past.pop();prev.revision=doc.revision+1;doc=prev;render();status('已撤销上一步。');});
+on('redo',()=>{if(!future.length)return;past.push(model.copy(doc));const next=future.pop();next.revision=doc.revision+1;doc=next;render();status('已重做。');});
+on('load-demo',()=>{choose({r:0,c:0,rows:1,cols:4});changeDocument(demo.createDemoDocument(),'已载入示例；可通过撤销恢复之前的设计。');});
+on('new-doc',()=>{if(!confirm('新建空白模板？当前内容可通过“撤销”恢复，或先导出 JSON。'))return;choose({r:0,c:0,rows:1,cols:1});changeDocument(model.newDocument(),'空白画布就绪：从左侧拖入一个积木。');});
+on('apply-binding',()=>{const path=$('binding').value;commit(d=>path?ops.bindField(d,selection.r,selection.c,path,true):ops.setText(d,selection.r,selection.c,$('cell-text').value),'已更新字段绑定。');});
+on('apply-text',()=>{const text=$('cell-text').value;commit(d=>ops.setText(d,selection.r,selection.c,text),'已应用静态文本。');});
+$('format').addEventListener('change',()=>safely(()=>{const value=$('format').value;commit(d=>{const[r,c]=ops.anchor(d,selection.r,selection.c);const cell=d.cells[model.keyOf(r,c)];ops.assert(cell?.binding,'请先绑定字段');cell.binding.format=value;});}));
+$('align').addEventListener('change',()=>safely(()=>{const value=$('align').value;commit(d=>ops.styleRange(d,selection,{horizontal:value}));}));
+on('apply-style',()=>{const style={background:$('background').value,fontSizePt:Number($('font-size').value)};commit(d=>ops.styleRange(d,selection,style));});
+on('toggle-bold',()=>{const bold=!selectedCell()?.style?.bold;commit(d=>ops.styleRange(d,selection,{bold}));});
+on('set-border',()=>commit(d=>ops.styleRange(d,selection,{borders:gridStyle.borders})));
+on('clear-border',()=>commit(d=>ops.styleRange(d,selection,{borders:{}})));
+on('apply-size',()=>{const height=Number($('row-height').value),width=Number($('col-width').value);commit(d=>{ops.eachCell(selection,(r,c)=>{d.rowHeightPx[r]=height;d.colWidthPx[c]=width;});},'已更新行高与列宽。');});
+on('merge',()=>commit(d=>ops.mergeRange(d,selection),'已合并选区。'));
+on('unmerge',()=>commit(d=>ops.unmergeRange(d,selection),'已取消合并。'));
+on('clear-range',()=>commit(d=>ops.clearRange(d,selection),'已清除独立区域。'));
+on('delete-block',()=>{const b=selectedBlock();ops.assert(b,'请先选中积木');commit(d=>ops.removeBlock(d,b.id),'已删除整个积木。');});
+on('apply-repeat',()=>{
+  const b=selectedBlock();ops.assert(b,'请先选中积木');
+  const source=$('repeat-source').value,repeat=source?{source,rowOffset:Number($('repeat-offset').value),rowCount:Number($('repeat-count').value),mode:'insert',empty:$('repeat-empty').value}:undefined;
+  commit(d=>{const block=d.blocks.find(x=>x.id===b.id);if(repeat)block.repeat=repeat;else delete block.repeat;},'已更新明细扩展规则；实际扩行由后端执行。');
+});
+on('export-json',()=>{
+  const snapshot=model.copy(doc);ops.validateDocument(snapshot);
+  const bytes=JSON.stringify({document:snapshot,metadata:ops.metadata(snapshot)},null,2);
+  const url=URL.createObjectURL(new Blob([bytes],{type:'application/json;charset=utf-8'}));
+  const a=document.createElement('a');a.href=url;a.download=`${snapshot.name}.json`;document.body.append(a);a.click();a.remove();
+  setTimeout(()=>URL.revokeObjectURL(url),30000);status('已发起模型 JSON 下载。');
+});
+on('about',()=>$('info-dialog').showModal());on('close-dialog',()=>$('info-dialog').close());
+$('info-dialog').addEventListener('click',e=>{if(e.target===$('info-dialog')){const r=e.target.getBoundingClientRect();if(e.clientX<r.left||e.clientX>r.right||e.clientY<r.top||e.clientY>r.bottom)e.target.close();}});
+render();
+
+})();</script></body></html>
