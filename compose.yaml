@@ -1,5 +1,31 @@
 services:
+  reporting-api:
+    build:
+      context: .
+      target: api
+    env_file: .env
+    environment:
+      REPORTING_MODE: production
+      REPORTING_HOST: 0.0.0.0
+      REPORTING_PORT: 5174
+      REPORTING_DATA_DIR: /data
+      REPORTING_PDF_PYTHON: /usr/local/bin/python3
+    volumes:
+      - reporting-data:/data
+      - ./config:/etc/brickbill:ro
+      - ./fonts:/fonts:ro
+    restart: unless-stopped
+
   report-designer:
-    build: .
+    build:
+      context: .
+      target: web
+    depends_on:
+      reporting-api:
+        condition: service_healthy
     ports:
-      - "127.0.0.1:8080:80"
+      - "${BRICKBILL_BIND:-127.0.0.1}:${BRICKBILL_PORT:-8080}:80"
+    restart: unless-stopped
+
+volumes:
+  reporting-data:

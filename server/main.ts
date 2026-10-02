@@ -1,14 +1,22 @@
 import { createLocalReportingRuntime } from './runtime.ts';
 import { createReportingHttpServer, loopbackAuthorizer } from './http/app.ts';
+import { parseTokenAuthorizations, readServerSettings, validatePdfRuntime } from './config.ts';
 
-const port = Number(process.env.REPORTING_PORT ?? 5174);
-const dataDirectory = process.env.REPORTING_DATA_DIR;
-if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('REPORTING_PORT 必须是 1 至 65535 的整数');
-const runtime = await createLocalReportingRuntime(dataDirectory);
+const settings = readServerSettings();
+const runtime = await createLocalReportingRuntime(settings.dataDirectory,
+  { includeDemoProjects: settings.includeDemoProjects, projectsFile: settings.projectsFile });
+if (!runtime.projects.size) throw new Error('项目注册文件没有可用项目');
+for (const projectIds of Object.values(parseTokenAuthorizations(settings.tokensJson) ?? {}))
+  for (const projectId of projectIds) if (!runtime.projects.has(projectId))
+    throw new Error(`令牌配置引用不存在的项目：${projectId}`);
+const pdfProjects = (process.env.REPORTING_PDF_ENABLED_PROJECTS ?? '').split(',').map(id => id.trim()).filter(Boolean);
+for (const projectId of pdfProjects) if (!runtime.projects.has(projectId))
+  throw new Error(`PDF 项目开关引用不存在的项目：${projectId}`);
+validatePdfRuntime();
 const server = createReportingHttpServer(runtime.service,
-  loopbackAuthorizer(process.env.REPORTING_TOKENS_JSON, [...runtime.projects.keys()]));
-server.listen(port, '127.0.0.1', () => {
-  process.stdout.write(`Brickbill reporting API listening at http://127.0.0.1:${port}/api\n`);
+  loopbackAuthorizer(settings.tokensJson, [...runtime.projects.keys()]));
+server.listen(settings.port, settings.host, () => {
+  process.stdout.write(`Brickbill reporting API listening at http://${settings.host}:${settings.port}/api\n`);
   process.stdout.write(`Data directory: ${runtime.dataDirectory}\n`);
 });
 

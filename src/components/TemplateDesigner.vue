@@ -15,7 +15,7 @@ import { exportTemplate, exportTemplatePackage, downloadBlob, xlsxBlob } from '.
 import { importTemplatePackage, parseTemplatePackageJson, parseDocumentJson, MAX_FILE_SIZE } from '../export/importExcel.ts';
 import { createHostBridge } from '../bridge/host.ts';
 import PagedPreview from './preview/PagedPreview.vue';
-import { ReportingClient, type GenerationPageReply, type GenerationReply, type ReportingProject } from '../services/reporting.ts';
+import { ReportingClient, defaultReportingBaseUrl, type GenerationPageReply, type GenerationReply, type ReportingProject } from '../services/reporting.ts';
 import type { ProjectedSheetPage } from '../core/render/page.ts';
 import type { PagePlan, ReportingErrorShape, TemplatePackage as ReportingTemplatePackage } from '../core/contracts/types.ts';
 
@@ -30,7 +30,7 @@ const serviceDialog = ref(false), servicePreviewDialog = ref(false);
 const sheetNameInput = ref('');
 const dataText = ref(JSON.stringify(certificateData, null, 2));
 const generated = ref<GeneratedResult>();
-const serviceBaseUrl = ref('http://127.0.0.1:5174/api'), serviceToken = ref('');
+const serviceBaseUrl = ref(defaultReportingBaseUrl), serviceToken = ref('');
 const serviceProjects = ref<ReportingProject[]>([]), serviceProjectId = ref(''), serviceDocumentType = ref('');
 const serviceBusinessKeyText = ref('{}'), serviceDraftRevision = ref(0), servicePublishedVersion = ref<number>();
 const serviceAutoMatch = ref(false), serviceMatchPriority = ref(100), serviceMatchConditionsText = ref('{}');
@@ -642,7 +642,7 @@ const previewTable = computed(() => {
     <el-dialog v-model="dataDialog" title="业务数据与自动生成" width="760px" :close-on-click-modal="false"><p class="muted">粘贴业务 JSON 对象。数组会识别为多行集合，嵌套数组可生成子明细字段；遍历所有记录补齐字段，已有字典不会被覆盖。数据仅在当前浏览器处理。</p><textarea v-model="dataText" class="json-editor" rows="18" aria-label="业务 JSON 数据" spellcheck="false" /><template #footer><button @click="inferDataFields">自动生成字段字典</button><button class="primary" @click="previewData">生成预览</button></template></el-dialog>
     <el-dialog v-model="serviceDialog" title="项目数据服务与模板发布" width="820px" :close-on-click-modal="false">
       <p class="muted">本流程使用服务端登记的项目数据源、视图和已发布模板。保存草稿后发布不可变版本，再用明确的业务单号生成。</p>
-      <div class="two-cols"><label>服务地址<input v-model="serviceBaseUrl" spellcheck="false" placeholder="http://127.0.0.1:5174/api" /></label><label>访问令牌<input v-model="serviceToken" type="password" autocomplete="off" placeholder="仅部署了令牌验证时填写" /></label></div>
+      <div class="two-cols"><label>服务地址<input v-model="serviceBaseUrl" spellcheck="false" placeholder="/api" /></label><label>访问令牌<input v-model="serviceToken" type="password" autocomplete="off" placeholder="仅部署了令牌验证时填写" /></label></div>
       <div class="two-cols"><label>项目<select v-model="serviceProjectId" @change="serviceProjectChanged"><option v-for="project in serviceProjects" :key="project.projectId" :value="project.projectId">{{ project.displayName }} · {{ project.projectId }}</option></select></label><label>单据类型<select v-model="serviceDocumentType"><option v-for="type in serviceProjects.find(item => item.projectId === serviceProjectId)?.documentTypes ?? []" :key="type" :value="type">{{ type }}</option></select></label></div>
       <label>业务单号参数 JSON<textarea v-model="serviceBusinessKeyText" class="json-editor" rows="4" spellcheck="false" @input="serviceIdempotencyKey = ''" /></label>
       <div class="button-row"><button @click="importServiceCatalog">导入项目字段目录</button><button @click="testServiceViews">视图试算</button><button @click="refreshServiceTemplateState">刷新版本状态</button></div>

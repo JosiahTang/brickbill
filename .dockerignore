@@ -5,3 +5,13 @@ dist
 *.zip
 preview
 docs
+var
+output
+tmp
+.runtime-test
+.env
+.env.*
+!.env.example
+config
+fonts
+backups

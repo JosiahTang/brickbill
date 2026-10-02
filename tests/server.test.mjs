@@ -45,6 +45,9 @@ test('HTTP generation pins a published template, snapshots output, paginates pre
   });
   const sendJson = (path, method, body, token) => request(path, token, { method, body: JSON.stringify(body) });
   try {
+    const health = await request('/health', 'no-token');
+    assert.equal(health.status, 200);
+    assert.deepEqual(await health.json(), { status: 'ok' });
     const projects = await request('/projects');
     assert.deepEqual((await projects.json()).map(item => item.projectId), ['dalipu-demo']);
     assert.equal((await request('/projects/general-mes-demo/catalog')).status, 403);
@@ -180,6 +183,14 @@ test('HTTP generation pins a published template, snapshots output, paginates pre
     assert.equal(disabledGenerate.status, 404);
     assert.equal((await request(`/projects/dalipu-demo/generations/${generated.generationId}/file`)).status, 200,
       'an existing snapshot remains available for reprint after its template is disabled');
+    const restarted = await createLocalReportingRuntime(directory);
+    const persisted = await restarted.service.generation('dalipu-demo', generated.generationId);
+    assert.equal(persisted.snapshot.output.sha256, stored.snapshot.output.sha256);
+    assert.deepEqual(await restarted.service.snapshots.readFile('dalipu-demo', generated.generationId),
+      new Uint8Array(await (await request(`/projects/dalipu-demo/generations/${generated.generationId}/file`)).arrayBuffer()),
+      'restart reads the same generated workbook from the persistent data directory');
+    const persistedTemplate = await restarted.service.templates.getVersion('dalipu-demo', template.packageId, 1);
+    assert.equal(persistedTemplate.value.packageId, template.packageId);
   } finally {
     await new Promise(resolve => server.close(resolve));
     await rm(directory, { recursive: true, force: true });

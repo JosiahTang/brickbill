@@ -20,10 +20,12 @@
     "serve:offline-preview": "node scripts/serve-static.mjs --root preview",
     "serve:api": "node --experimental-strip-types server/main.ts",
     "seed:examples": "node --experimental-strip-types scripts/seed-examples.mjs",
+    "smoke:deployment": "node --experimental-strip-types scripts/smoke-deployment.mjs",
     "benchmark:reporting": "node --experimental-strip-types scripts/benchmark-reporting.mjs",
     "test:api": "node --experimental-strip-types --test tests/server.test.mjs",
+    "test:deployment": "node --experimental-strip-types --test tests/deployment.test.mjs",
     "test:host": "node --experimental-strip-types --test tests/host.test.mjs",
-    "verify": "npm test && npm run test:schema && npm run test:excel && npm run test:pdf && npm run test:api && npm run test:host && npm run build"
+    "verify": "npm test && npm run test:schema && npm run test:excel && npm run test:pdf && npm run test:api && npm run test:deployment && npm run test:host && npm run build"
   },
   "dependencies": {
     "@univerjs/core": "1.0.3",

@@ -17,12 +17,12 @@ export interface GenerationReply {
   fileUrl: string; pdfUrl?: string; snapshot: { pagePlan: unknown; [key: string]: unknown };
 }
 export interface GenerationPageReply { pageNumber: number; totalPages: number; diagnostics: unknown[]; sheets: ProjectedSheetPage[]; resources: NonNullable<TemplatePackage['resources']> }
-const defaultBase = import.meta.env.VITE_REPORTING_API_URL || 'http://127.0.0.1:5174/api';
+export const defaultReportingBaseUrl = import.meta.env.VITE_REPORTING_API_URL || '/api';
 
 export class ReportingClient {
   readonly baseUrl: string;
   readonly token: string;
-  constructor(baseUrl = defaultBase, token = '') { this.baseUrl = baseUrl.replace(/\/$/, ''); this.token = token; }
+  constructor(baseUrl = defaultReportingBaseUrl, token = '') { this.baseUrl = baseUrl.replace(/\/$/, ''); this.token = token; }
   private async request<T>(path: string, init: RequestInit = {}): Promise<T> {
     const response = await fetch(`${this.baseUrl}${path}`, { ...init, headers: {
       ...(init.body ? { 'content-type': 'application/json' } : {}), ...(this.token ? { authorization: `Bearer ${this.token}` } : {}), ...init.headers,

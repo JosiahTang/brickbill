@@ -33,6 +33,7 @@ export async function loadProjectRegistrations(fileName: string): Promise<Map<st
     new DataViewEngine({ project: registration.project, catalog: catalog.fields, views: registration.views, functions });
     const tokenEnv = registration.source.bearerTokenEnv;
     if (tokenEnv && !/^[A-Z_][A-Z0-9_]*$/.test(tokenEnv)) throw new Error('Invalid bearerTokenEnv');
+    if (tokenEnv && !process.env[tokenEnv]) throw new Error(`Missing project source token environment variable ${tokenEnv}`);
     const adapter = new HttpProjectAdapter(registration.project, registration.adapter, {
       endpoint: registration.source.endpoint, timeoutMs: registration.source.timeoutMs,
       maxResponseBytes: registration.source.maxResponseBytes,

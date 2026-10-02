@@ -86,6 +86,8 @@ T21 的自动化结果与打印验收边界见 [流式分页验证记录](docs/v
 
 T22 固定版式 PDF 的环境配置、项目开关及独立视觉验收见 [PDF 输出说明](docs/pdf-output.md) 和 [验证记录](docs/verification-t22.md)。
 
+T23 的前后端同域部署、持久化、配置示例与重启冒烟流程见 [部署说明](deploy/README.md)。
+
 参考生成服务的启动、HTTP 路由、版本发布、自动匹配和快照重印说明见 [本地统一生成服务](docs/reporting-api-v1.md)。接口使用模拟数据；真实 MES 接入需要为各项目实现只读适配器并配置身份授权。
 
 T01—T17 的通用数据核心、复杂固定分页、分页 XLSX、逐页预览、参考服务和宿主协议协商已实现。T18—T20 增加了达力普与第二 MES 模拟项目的四套模板、只读 HTTP 项目注册、浏览器接线修复和验收记录。项目接入、制版及差异说明见 [项目接入](docs/project-integration.md)、[模板制作](docs/template-design.md)、[达力普参考](examples/projects/dalipu/README.md)。真实 MES 适配、BFR 人工对照、目标办公软件实印校准和生产身份集成仍需按项目环境完成。

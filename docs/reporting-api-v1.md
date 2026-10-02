@@ -10,7 +10,7 @@ T14—T17 提供可运行的 Node.js 参考服务：前端只负责设计、字�
 npm run serve:api
 ```
 
-服务默认只监听 `127.0.0.1:5174`，数据保存在项目目录的 `var/brickbill-reporting/`。前端用 `npm run dev` 启动后，在“项目服务 / 分页生成”中连接服务。开发服务预置 `dalipu-demo` 和 `general-mes-demo` 两个模拟项目，使用仓库内的脱敏样例数据，不连接 MES 数据库。
+开发服务默认只监听 `127.0.0.1:5174`，数据保存在项目目录的 `var/brickbill-reporting/`。前端用 `npm run dev` 启动后，通过 Vite 代理访问同域 `/api`。开发服务预置 `dalipu-demo` 和 `general-mes-demo` 两个模拟项目，使用仓库内的脱敏样例数据，不连接 MES 数据库。完整部署配置见 [部署说明](../deploy/README.md)。
 
 如需在部署环境启用项目令牌，将 `REPORTING_TOKENS_JSON` 配置为令牌到项目 ID 列表的映射，例如：
 
@@ -33,6 +33,8 @@ npm run serve:api
 ## HTTP 接口
 
 所有路径以 `/api` 开头。最小调用示例：
+
+`GET /api/health` 返回 `{"status":"ok"}`，供部署健康检查使用，不返回项目或令牌信息。
 
 ```http
 GET /api/projects

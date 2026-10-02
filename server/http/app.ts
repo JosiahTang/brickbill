@@ -1,5 +1,6 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import type { ReportingService } from '../services/generate.ts';
+import { parseTokenAuthorizations } from '../config.ts';
 
 export interface RequestAccess { projectIds: string[] }
 export type ReportingAuthorizer = (request: IncomingMessage) => Promise<RequestAccess> | RequestAccess;
@@ -75,6 +76,9 @@ export function createReportingHttpServer(service: ReportingService, authorize: 
       const url = new URL(request.url ?? '/', 'http://127.0.0.1');
       const parts = url.pathname.split('/').filter(Boolean).map(part => decodeURIComponent(part));
       if (parts[0] !== 'api') { json(response, 404, { error: { code: 'DATA_NOT_FOUND', message: '接口不存在' } }); return; }
+      if (parts.length === 2 && parts[1] === 'health' && request.method === 'GET') {
+        json(response, 200, { status: 'ok' }); return;
+      }
       if (parts.length === 2 && parts[1] === 'projects' && request.method === 'GET') {
         const all = await service.listProjects();
         json(response, 200, all.filter((project: any) => access.projectIds.includes(project.projectId))); return;
@@ -223,7 +227,7 @@ export function createReportingHttpServer(service: ReportingService, authorize: 
 }
 
 export function loopbackAuthorizer(tokensJson = process.env.REPORTING_TOKENS_JSON, localProjectIds: string[] = []): ReportingAuthorizer {
-  const configured = tokensJson ? JSON.parse(tokensJson) as Record<string, string[]> : undefined;
+  const configured = parseTokenAuthorizations(tokensJson);
   return request => {
     if (configured) {
       const token = request.headers.authorization?.replace(/^Bearer\s+/i, '');

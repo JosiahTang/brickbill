@@ -4,13 +4,16 @@ import { LocalResourceRepository, LocalSnapshotRepository, LocalTemplateReposito
 import { ReportingService, type RuntimeProject } from './services/generate.ts';
 import { loadProjectRegistrations } from './project-registration.ts';
 
-export async function createLocalReportingRuntime(dataDirectory = join(process.cwd(), 'var', 'brickbill-reporting')) {
-  const demo = createReportingDemoContext();
-  const projects = new Map<string, RuntimeProject>([
-    [demo.dalipu.project.projectId, demo.dalipu],
-    [demo.generalMes.project.projectId, demo.generalMes],
-  ]);
-  if (process.env.REPORTING_PROJECTS_FILE) for (const [projectId, context] of await loadProjectRegistrations(process.env.REPORTING_PROJECTS_FILE)) {
+export async function createLocalReportingRuntime(dataDirectory = join(process.cwd(), 'var', 'brickbill-reporting'),
+  options: { includeDemoProjects?: boolean; projectsFile?: string } = {}) {
+  const projects = new Map<string, RuntimeProject>();
+  if (options.includeDemoProjects ?? true) {
+    const demo = createReportingDemoContext();
+    projects.set(demo.dalipu.project.projectId, demo.dalipu);
+    projects.set(demo.generalMes.project.projectId, demo.generalMes);
+  }
+  const projectsFile = options.projectsFile ?? process.env.REPORTING_PROJECTS_FILE;
+  if (projectsFile) for (const [projectId, context] of await loadProjectRegistrations(projectsFile)) {
     if (projects.has(projectId)) throw new Error(`Project registration conflicts with built-in example: ${projectId}`);
     projects.set(projectId, context);
   }
