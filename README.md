@@ -15,6 +15,7 @@ npm start
 
 ```sh
 npm run verify         # 领域 / 导入生成回读 / Schema / Excel / 类型检查 / 生产构建
+npm run test:e2e       # Playwright 浏览器验收：导入、拖拽、分页、发布和输出
 npm run seed:examples  # 安装达力普和第二 MES 模拟项目的四套示例模板
 npm run benchmark:reporting # 输出本机合成数据生成基线
 npm run build
@@ -87,6 +88,8 @@ T21 的自动化结果与打印验收边界见 [流式分页验证记录](docs/v
 T22 固定版式 PDF 的环境配置、项目开关及独立视觉验收见 [PDF 输出说明](docs/pdf-output.md) 和 [验证记录](docs/verification-t22.md)。
 
 T23 的前后端同域部署、持久化、配置示例与重启冒烟流程见 [部署说明](deploy/README.md)。
+
+T24 的 GitHub Actions 全量验证、浏览器验收、Compose 构建和重启后快照哈希检查见 [CI 与验收记录](docs/verification-t24.md)。
 
 参考生成服务的启动、HTTP 路由、版本发布、自动匹配和快照重印说明见 [本地统一生成服务](docs/reporting-api-v1.md)。接口使用模拟数据；真实 MES 接入需要为各项目实现只读适配器并配置身份授权。
 

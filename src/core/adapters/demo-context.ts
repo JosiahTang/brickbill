@@ -1,4 +1,5 @@
 import dalipuSource from '../../../tests/fixtures/reporting/dalipu/source.json' with { type: 'json' };
+import dalipuMultipageSource from '../../../tests/fixtures/reporting/dalipu/multipage.json' with { type: 'json' };
 import generalSource from '../../../tests/fixtures/reporting/general-mes/source.json' with { type: 'json' };
 import type { FieldCatalog, ProjectSourceEnvelope } from '../contracts/types.ts';
 import { buildFieldCatalog, validateCatalogAgainstProject } from '../catalog/catalog.ts';
@@ -23,7 +24,7 @@ export function createReportingDemoContext() {
       project: dalipuProject, catalog: dalipuCatalog, views,
       functions: createQualityFunctionRegistry(),
       adapter: new InMemoryProjectAdapter(dalipuProject, toRuntimeAdapterConfig(createExampleAdapterDefinition(dalipuProject)),
-        [dalipuSource as ProjectSourceEnvelope]),
+        [dalipuSource as ProjectSourceEnvelope, dalipuMultipageSource as ProjectSourceEnvelope]),
       request: { documentType: 'qualityCertificate', businessKey: { printNo: 'DEMO-CERT-001', productPart: 'T' } },
     },
     generalMes: {

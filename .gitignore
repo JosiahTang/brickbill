@@ -6,6 +6,8 @@ config/
 fonts/
 backups/
 .runtime-test/
+test-results/
+playwright-report/
 tmp/
 .npm-cache/
 __pycache__/

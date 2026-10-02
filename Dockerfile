@@ -24,6 +24,8 @@ COPY package*.json ./
 COPY server ./server
 COPY src ./src
 COPY schemas ./schemas
+COPY examples ./examples
+COPY tests/fixtures/reporting ./tests/fixtures/reporting
 RUN mkdir -p /data && chown 10001:10001 /data
 USER 10001:10001
 EXPOSE 5174

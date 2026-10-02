@@ -1,0 +1,107 @@
+name: T24 CI and acceptance
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: t24-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify-and-browser:
+    name: Verify, PDF, and browser acceptance
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Install an open CJK font and PDF runtime
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y fonts-noto-cjk
+          test -f /usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc
+          python -m venv "$RUNNER_TEMP/brickbill-pdf"
+          "$RUNNER_TEMP/brickbill-pdf/bin/python" -m pip install --disable-pip-version-check reportlab==4.4.9 Pillow==12.3.0 pypdf
+          echo "REPORTING_PDF_PYTHON=$RUNNER_TEMP/brickbill-pdf/bin/python" >> "$GITHUB_ENV"
+          echo 'REPORTING_PDF_FALLBACK_FONT=/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc' >> "$GITHUB_ENV"
+          echo "T22_PDF_SAMPLE_OUTPUT=$RUNNER_TEMP/brickbill-t24-pdf-sample.pdf" >> "$GITHUB_ENV"
+      - run: npm ci
+      - name: Run unit, API, Excel, PDF, type, and build checks
+        run: npm run verify
+      - name: Run browser workflow acceptance
+        run: |
+          npx playwright install --with-deps chromium
+          npm run test:e2e
+        env:
+          CI: 'true'
+      - name: Save browser traces, screenshots, videos, and reports
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v5
+        with:
+          name: t24-browser-acceptance
+          path: |
+            test-results/
+            playwright-report/
+            ${{ runner.temp }}/brickbill-t24-pdf-sample.pdf
+          retention-days: 14
+          if-no-files-found: ignore
+
+  docker-compose-restart:
+    name: Docker deployment and snapshot restart smoke
+    runs-on: ubuntu-latest
+    needs: verify-and-browser
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install smoke runner dependencies and PDF font
+        shell: bash
+        run: |
+          npm ci
+          sudo apt-get update
+          sudo apt-get install -y fonts-noto-cjk
+          mkdir -p fonts
+          cp /usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc fonts/t24-noto-cjk.ttc
+      - name: Configure synthetic container project
+        shell: bash
+        run: |
+          cat > .env <<'EOF'
+          REPORTING_TOKENS_JSON={"brickbill-ci-synthetic-token":["dalipu-demo"]}
+          REPORTING_PROJECTS_FILE=
+          REPORTING_DEMO_PROJECTS=enabled
+          REPORTING_PDF_ENABLED_PROJECTS=dalipu-demo
+          REPORTING_PDF_FALLBACK_FONT=/fonts/t24-noto-cjk.ttc
+          REPORTING_PDF_FONT_MAP_JSON={}
+          BRICKBILL_BIND=127.0.0.1
+          BRICKBILL_PORT=8080
+          EOF
+      - name: Build, generate, restart, and verify snapshot hash
+        run: npm run test:compose-smoke
+        env:
+          BRICKBILL_SMOKE_TOKEN: brickbill-ci-synthetic-token
+          BRICKBILL_SMOKE_URL: http://127.0.0.1:8080
+      - name: Save Compose logs and restart hash records
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v5
+        with:
+          name: t24-compose-deployment-smoke
+          path: output/t24/
+          retention-days: 14
+          if-no-files-found: warn
