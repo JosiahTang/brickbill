@@ -17,7 +17,7 @@ concurrency:
 jobs:
   verify-and-browser:
     name: Verify, PDF, and browser acceptance
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v6
@@ -50,7 +50,7 @@ jobs:
           CI: 'true'
       - name: Save browser traces, screenshots, videos, and reports
         if: ${{ !cancelled() }}
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name: t24-browser-acceptance
           path: |
@@ -62,7 +62,7 @@ jobs:
 
   docker-compose-restart:
     name: Docker deployment and snapshot restart smoke
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     needs: verify-and-browser
     timeout-minutes: 45
     steps:
@@ -99,7 +99,7 @@ jobs:
           BRICKBILL_SMOKE_URL: http://127.0.0.1:8080
       - name: Save Compose logs and restart hash records
         if: ${{ !cancelled() }}
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name: t24-compose-deployment-smoke
           path: output/t24/
