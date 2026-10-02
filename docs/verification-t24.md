@@ -1,6 +1,6 @@
 # T24 持续集成与浏览器自动验收
 
-`.github/workflows/ci.yml` 在 `main` 推送、面向 `main` 的 PR 和手动触发时运行两项作业。验证作业执行 `npm run verify`，显式安装 ReportLab、Pillow、pypdf 与 Noto CJK 字体，并安装 Playwright Chromium；PDF 用例因此不会因环境缺失而跳过。浏览器失败保留 Playwright trace、截图和视频。
+`.github/workflows/ci.yml` 在 `main` 推送、面向 `main` 的 PR 和手动触发时运行两项作业。验证作业执行 `npm run verify`，显式安装 ReportLab、Pillow、pypdf 与 WenQuanYi TrueType CJK 字体，并安装 Playwright Chromium；PDF 用例因此不会因环境缺失而跳过。PDF 测试需要 ReportLab 可嵌入的 TrueType 轮廓，不能仅凭 TTC 扩展名判断字体兼容。浏览器失败保留 Playwright trace、截图和视频。
 
 Playwright 用合成达力普质保书样例执行以下路径：导入多工作表 Excel、将字段真实拖到画布、修改分页容量、保存并重新导入 XLSX 校验绑定和版式、刷新本地草稿、保存并发布服务端版本、预览主表和硬度附页、下载 XLSX 与 PDF 并比较生成快照。然后以大样本业务号生成多页单据，验证总页数和末页附页。测试数据只使用仓库中的合成来源。
 
