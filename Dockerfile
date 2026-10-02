@@ -6,6 +6,8 @@ COPY index.html vite.config.ts tsconfig.json ./
 COPY src ./src
 COPY server ./server
 COPY schemas ./schemas
+COPY examples ./examples
+COPY tests/fixtures/reporting ./tests/fixtures/reporting
 RUN npm run build
 
 FROM web-build AS api-deps
