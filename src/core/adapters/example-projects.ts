@@ -131,7 +131,7 @@ function sourceColumn(projectId: string, fieldId: string): string {
     return fieldId.split('.').at(-1)!;
   }
   // The second project deliberately uses a different source naming convention.
-  return fieldId.split('.').at(-1)!.replace(/[A-Z]/g, letter => `_${letter.toLowerCase()}`);
+  return fieldId.split('.').at(-1)!.replace(/([a-z0-9])([A-Z])/g, '$1_$2').toLowerCase();
 }
 
 export function createExampleAdapterDefinition(project: ProjectDefinition): ProjectAdapterDefinition {

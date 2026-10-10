@@ -31,8 +31,8 @@ function numeric(record: DataRecord, fieldId: string, operation: string): number
   return value;
 }
 function fieldSet(fields: Array<{ fieldId: string }>): Set<string> { return new Set(fields.map(field => field.fieldId)); }
-function ensureKnown(known: Set<string>, fieldId: string): void {
-  if (!known.has(fieldId)) error('FIELD_NOT_FOUND', `数据视图引用了未知字段 ${fieldId}`, { fieldId });
+function ensureKnown(known: Set<string>, fieldId: string, viewId?: string): void {
+  if (!known.has(fieldId)) error('FIELD_NOT_FOUND', `数据视图引用了未知字段 ${fieldId}`, { fieldId, ...(viewId ? { viewId } : {}) });
 }
 
 export interface DataViewEngineOptions {
@@ -106,7 +106,8 @@ export class DataViewEngine {
     let currentDatasetId = view.sourceDatasetId;
     let known = fieldSet(this.datasetById.get(currentDatasetId)!.fields);
 
-    for (const step of view.steps) {
+    for (const [stepIndex, step] of view.steps.entries()) {
+      try {
       if (step.op === 'filter') {
         ensureKnown(known, step.fieldId);
         rows = rows.filter(record => {
@@ -259,9 +260,14 @@ export class DataViewEngine {
         currentDatasetId = entry.definition.outputDatasetId;
         known = new Set(entry.definition.outputFields);
       }
+      } catch (cause) {
+        if (cause instanceof ReportingError) throw new ReportingError({ ...cause.toJSON(),
+          context: { ...cause.context, viewId, stepIndex } });
+        throw cause;
+      }
     }
 
-    for (const fieldId of view.outputFields) ensureKnown(known, fieldId);
+    for (const fieldId of view.outputFields) ensureKnown(known, fieldId, viewId);
     for (const record of rows) for (const fieldId of view.outputFields) if (!Object.hasOwn(record.values, fieldId))
       record.values[fieldId] = null;
     rows = rows.map(record => ({ recordId: record.recordId,
@@ -311,11 +317,16 @@ export class DataViewEngine {
 
   private outputDatasetId(view: DataViewDefinition): string {
     let datasetId = view.sourceDatasetId;
-    for (const step of view.steps) if (step.op === 'applyFunction') {
+    for (const [stepIndex, step] of view.steps.entries()) if (step.op === 'applyFunction') {
+      try {
       const fn = this.options.functions.resolve(step.functionId, step.version);
       if (!fn.definition.inputDatasetIds.includes(datasetId)) error('VIEW_INVALID',
         `函数 ${step.functionId} 不接受当前数据集 ${datasetId}`, { viewId: view.viewId });
       datasetId = fn.definition.outputDatasetId;
+      } catch (cause) {
+        if (cause instanceof ReportingError) throw new ReportingError({ ...cause.toJSON(), context: { ...cause.context, viewId: view.viewId, stepIndex } });
+        throw cause;
+      }
     }
     return datasetId;
   }

@@ -1,7 +1,7 @@
 import { mkdir, readFile, rename, rm, readdir, writeFile } from 'node:fs/promises';
 import { createHash, randomUUID } from 'node:crypto';
 import { join } from 'node:path';
-import type { DataViewDefinition, GenerationSnapshot, TemplatePackage } from '../../src/core/contracts/types.ts';
+import type { DataViewDefinition, GenerationSnapshot, Scalar, TemplatePackage } from '../../src/core/contracts/types.ts';
 
 function key(value: string): string { return Buffer.from(value).toString('base64url'); }
 async function exists(path: string): Promise<boolean> {
@@ -49,6 +49,13 @@ async function exclusive<T>(lockKey: string, operation: () => Promise<T>): Promi
 export interface DraftRecord<T> { projectId: string; itemId: string; revision: number; value: T }
 export interface PublishedRecord<T> { projectId: string; itemId: string; version: number; publishedAt: string; value: T }
 export interface TemplateMatchRule { documentType: string; conditions: Record<string, string>; priority: number }
+export interface TemplateListItem {
+  templateId: string;
+  name: string;
+  latestVersion?: number;
+  draftRevision?: number;
+  disabled: boolean;
+}
 
 export class LocalTemplateRepository {
   private readonly root: string;
@@ -91,6 +98,26 @@ export class LocalTemplateRepository {
     const records = await Promise.all(names.filter(name => name.endsWith('.json')).map(name => readJson<PublishedRecord<TemplatePackage>>(join(folder, name))));
     return records.filter((record): record is PublishedRecord<TemplatePackage> => !!record)
       .map(({ itemId, version, publishedAt }) => ({ itemId, version, publishedAt })).sort((a, b) => a.version - b.version);
+  }
+  async listTemplates(projectId: string): Promise<TemplateListItem[]> {
+    const folder = join(this.root, key(projectId), 'templates');
+    let names: string[];
+    try { names = await readdir(folder); }
+    catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return []; throw error; }
+    const items = await Promise.all(names.map(async name => {
+      const templateId = Buffer.from(name, 'base64url').toString();
+      if (!templateId) return undefined;
+      const [draft, versions, disabled] = await Promise.all([
+        this.getDraft(projectId, templateId), this.listVersions(projectId, templateId), this.isDisabled(projectId, templateId),
+      ]);
+      const latestVersion = versions.at(-1);
+      const latest = latestVersion ? await this.getVersion(projectId, templateId, latestVersion.version) : undefined;
+      const nameValue = latest?.value.name ?? draft?.value.name ?? templateId;
+      return { templateId, name: nameValue, ...(latestVersion ? { latestVersion: latestVersion.version } : {}),
+        ...(draft ? { draftRevision: draft.revision } : {}), disabled } satisfies TemplateListItem;
+    }));
+    return items.filter((item): item is TemplateListItem => !!item)
+      .sort((a, b) => a.name.localeCompare(b.name) || a.templateId.localeCompare(b.templateId));
   }
   async setDisabled(projectId: string, templateId: string, disabled: boolean): Promise<void> {
     await atomicJson(join(this.base(projectId, templateId), 'state.json'), { disabled, updatedAt: new Date().toISOString() });
@@ -192,6 +219,26 @@ export interface StoredGeneration {
   idempotencyKey: string;
   requestHash: string;
   createdAt: string;
+  signoff?: { actorId: string; signedAt: string };
+}
+export interface StoredGenerationHistory {
+  generationId: string;
+  documentType: string;
+  businessKey: Record<string, Scalar>;
+  templateRef: { packageId: string; revision: number };
+  status: 'preview' | 'issue';
+  createdAt: string;
+  signoff?: { actorId: string; signedAt: string };
+  pageCount: number;
+  output?: GenerationSnapshot['output'];
+}
+function historySummary(record: StoredGeneration): StoredGenerationHistory {
+  return {
+    generationId: record.snapshot.generationId, documentType: record.snapshot.data.documentType,
+    businessKey: structuredClone(record.snapshot.businessKey), templateRef: structuredClone(record.snapshot.templateRef),
+    status: record.mode, createdAt: record.createdAt, ...(record.signoff ? { signoff: structuredClone(record.signoff) } : {}),
+    pageCount: record.snapshot.pagePlan?.totalPages ?? 0, ...(record.snapshot.output ? { output: structuredClone(record.snapshot.output) } : {}),
+  };
 }
 
 export interface StoredPdfArtifact {
@@ -221,11 +268,47 @@ export class LocalSnapshotRepository {
     try {
       await writeFile(join(staging, 'record.json'), serialized, { flag: 'wx' });
       await writeFile(join(staging, 'output.xlsx'), xlsx, { flag: 'wx' });
+      await writeFile(join(staging, 'history.json'), JSON.stringify(historySummary(record)), { flag: 'wx' });
       await rename(staging, target);
     } catch (error) { await rm(staging, { recursive: true, force: true }).catch(() => {}); throw error; }
   }
   async get(projectId: string, generationId: string): Promise<StoredGeneration | undefined> {
     return readJson(join(this.path(projectId, generationId), 'record.json'));
+  }
+  async list(projectId: string): Promise<StoredGenerationHistory[]> {
+    const folder = join(this.root, key(projectId), 'generations');
+    let names: string[];
+    try { names = await readdir(folder); }
+    catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return []; throw error; }
+    const records: StoredGenerationHistory[] = [];
+    for (const name of names.filter(name => !name.endsWith('.tmp'))) {
+      const generationId = Buffer.from(name, 'base64url').toString();
+      const folderPath = this.path(projectId, generationId);
+      let summary = await readJson<StoredGenerationHistory>(join(folderPath, 'history.json'));
+      if (!summary) {
+        const legacy = await this.get(projectId, generationId);
+        if (!legacy) continue;
+        summary = historySummary(legacy);
+        await atomicJson(join(folderPath, 'history.json'), summary);
+      }
+      records.push(summary);
+    }
+    return records.sort((a, b) => b.createdAt.localeCompare(a.createdAt) || b.generationId.localeCompare(a.generationId));
+  }
+  async signoff(projectId: string, generationId: string, actorId: string): Promise<StoredGeneration> {
+    return exclusive(`generation-signoff:${projectId}:${generationId}`, async () => {
+      const record = await this.get(projectId, generationId);
+      if (!record) throw Object.assign(new Error(`生成记录不存在：${generationId}`), { code: 'DATA_NOT_FOUND' });
+      if (record.signoff) {
+        await atomicJson(join(this.path(projectId, generationId), 'history.json'), historySummary(record));
+        return record;
+      }
+      if (record.mode !== 'preview') throw Object.assign(new Error('只有预览记录可以确认签发'), { code: 'CONTRACT_INVALID' });
+      const signed = { ...record, mode: 'issue' as const, signoff: { actorId, signedAt: new Date().toISOString() } };
+      await atomicJson(join(this.path(projectId, generationId), 'record.json'), signed);
+      await atomicJson(join(this.path(projectId, generationId), 'history.json'), historySummary(signed));
+      return signed;
+    });
   }
   async readFile(projectId: string, generationId: string): Promise<Uint8Array | undefined> {
     try { return new Uint8Array(await readFile(join(this.path(projectId, generationId), 'output.xlsx'))); }

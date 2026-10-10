@@ -15,7 +15,17 @@ import { exportTemplate, exportTemplatePackage, downloadBlob, xlsxBlob } from '.
 import { importTemplatePackage, parseTemplatePackageJson, parseDocumentJson, MAX_FILE_SIZE } from '../export/importExcel.ts';
 import { createHostBridge } from '../bridge/host.ts';
 import PagedPreview from './preview/PagedPreview.vue';
-import { ReportingClient, defaultReportingBaseUrl, type GenerationPageReply, type GenerationReply, type ReportingProject } from '../services/reporting.ts';
+import ViewEditor from './configuration/ViewEditor.vue';
+import FieldPicker from './configuration/FieldPicker.vue';
+import ImageResources from './configuration/ImageResources.vue';
+import OrderEditor from './configuration/OrderEditor.vue';
+import ViewTrialResults from './configuration/ViewTrialResults.vue';
+import { stepScope, type DesignerMetadata } from '../core/designer/configuration.ts';
+import { remainingCapacity } from '../core/pagination/fixed.ts';
+import { upsertPageDefinition } from '../core/templates/package.ts';
+import type { ViewPreviewReply } from '../services/reporting.ts';
+import { ReportingClient, defaultReportingBaseUrl, type GenerationHistoryPage, type GenerationPageReply, type GenerationReply,
+  type ReportingProject, type ReportingTemplateSummary } from '../services/reporting.ts';
 import type { ProjectedSheetPage } from '../core/render/page.ts';
 import type { PagePlan, ReportingErrorShape, TemplatePackage as ReportingTemplatePackage } from '../core/contracts/types.ts';
 
@@ -25,6 +35,8 @@ const busy = ref(false), projectionError = ref(''), saveStatus = ref('尚未修�
 const hint = ref('导入 Excel 模板后，将左侧字段拖到单元格；明细字段请先设置重复区域。');
 const search = ref(''), activeTab = ref('binding'), addressInput = ref('A1');
 const zoom = ref(1);
+const pageRegionRect = ref<import('../domain/model.ts').Rect>();
+const pageRegionWorksheetId = ref('');
 const fieldDialog = ref(false), dataDialog = ref(false), previewDialog = ref(false);
 const serviceDialog = ref(false), servicePreviewDialog = ref(false);
 const sheetNameInput = ref('');
@@ -33,8 +45,43 @@ const generated = ref<GeneratedResult>();
 const serviceBaseUrl = ref(defaultReportingBaseUrl), serviceToken = ref('');
 const serviceProjects = ref<ReportingProject[]>([]), serviceProjectId = ref(''), serviceDocumentType = ref('');
 const serviceBusinessKeyText = ref('{}'), serviceDraftRevision = ref(0), servicePublishedVersion = ref<number>();
+const serviceBusinessValues = ref<Record<string, string>>({}), serviceTemplates = ref<ReportingTemplateSummary[]>([]);
+const serviceSelectedTemplateId = ref(''), serviceTemplateVersions = ref<Array<{ itemId: string; version: number; publishedAt: string }>>([]);
+const serviceSelectedTemplateVersion = ref<number>();
+const serviceHistory = ref<GenerationHistoryPage>(), serviceHistoryQuery = ref(''), serviceHistoryTemplateId = ref('');
+const serviceHistoryStatus = ref<'all' | 'preview' | 'issue'>('all'), serviceHistoryFrom = ref(''), serviceHistoryTo = ref(''), serviceHistoryPage = ref(1);
 const serviceAutoMatch = ref(false), serviceMatchPriority = ref(100), serviceMatchConditionsText = ref('{}');
 const serviceError = ref(''), serviceViewSummary = ref(''), serviceGeneration = ref<GenerationReply>();
+const designerMetadata = ref<DesignerMetadata>(), currentView = ref<DataViewDefinition>(), currentViewError = ref('');
+const viewEditor = ref<InstanceType<typeof ViewEditor>>();
+const trialResult = ref<ViewPreviewReply>(), trialFingerprint = ref('');
+const configurationFingerprint = computed(() => JSON.stringify([store.templatePackage?.revision, store.doc.revision, currentView.value, pageForm, pageRegionRect.value, pageRegionWorksheetId.value, store.activeWorksheetId, store.selection, serviceProjectId.value, serviceDocumentType.value, serviceBusinessValues.value]));
+const availableViews = computed(() => [...new Map([...(designerMetadata.value?.views ?? []),
+  ...(store.templatePackage?.projectId === serviceProjectId.value ? viewDrafts.value : []),
+  ...(currentView.value ? [currentView.value] : [])].map(view => [view.viewId, view])).values()]);
+const pageViewFields = computed(() => {
+  const view = availableViews.value.find(item => item.viewId === pageForm.viewId);
+  return view && designerMetadata.value ? stepScope(designerMetadata.value, view.sourceDatasetId, view.steps).fields.filter(field => view.outputFields.includes(field.fieldId)) : [];
+});
+const pageDictionaryFields = computed(() => fields.value.filter(field => field.fieldId && pageViewFields.value.some(item => item.fieldId === (field.sourceFieldId ?? field.fieldId)))
+  .map(field => ({ fieldId: field.fieldId!, label: field.label, type: field.format === 'number' ? 'number' as const : field.format === 'date' ? 'date' as const : 'text' as const, nullable: true })));
+const fieldSourceOptions = computed(() => {
+  if (fieldForm.sourceKind === 'dataset') return designerMetadata.value?.project.datasets.find(item => item.datasetId === fieldForm.datasetId)?.fields ?? [];
+  const view = availableViews.value.find(item => item.viewId === fieldForm.viewId);
+  return view && designerMetadata.value ? stepScope(designerMetadata.value, view.sourceDatasetId, view.steps).fields.filter(field => view.outputFields.includes(field.fieldId)) : [];
+});
+const pageSelections = reactive(Object.fromEntries(['groupBy', 'mergeFieldIds', 'hideRepeatedFieldIds', 'repeatGroupFieldIds'].map(key => [key, computed({
+  get: () => (pageForm[key as 'groupBy'] || '').split(',').map(item => item.trim()).filter(Boolean),
+  set: (value: string[]) => { pageForm[key as 'groupBy'] = value.join(','); },
+})]))) as unknown as Record<string, string[]>;
+const pageCapacityHint = computed(() => {
+  if (!store.templatePackage || pageForm.regionKind !== 'detail') return '';
+  if (pageForm.paginationMode === 'flow') return '流式容量由现有文字测量及分页规划器试算，保存前可检查当前配置。';
+  try {
+    const page = buildPageConfiguration(), region = page.regions.find(item => item.regionId === pageForm.regionId) ?? page.regions.at(-1)!;
+    return `当前区域容量：${remainingCapacity(region, page, 1, 1, {}, store.templatePackage)} 条记录；联动区域共用业务分组字段。`;
+  } catch (error) { return `容量检查：${message(error)}`; }
+});
 const serviceErrorIssue = ref<ReportingErrorShape>();
 const servicePageNumber = ref(0), servicePageSheets = ref<ProjectedSheetPage[]>([]), servicePageResources = ref<NonNullable<ReportingTemplatePackage['resources']>>([]);
 const servicePageDiagnostics = ref<ReportingErrorShape[]>([]), servicePageLoading = ref(false), servicePagePlan = ref<PagePlan>();
@@ -44,12 +91,10 @@ const serviceGenerationTemplateLabel = computed(() => {
   return templateRef ? `${templateRef.packageId ?? ''}@${templateRef.revision ?? ''}` : '';
 });
 const serviceViewDraftCount = computed(() => store.templatePackage?.viewDrafts?.length ?? 0);
+const serviceBusinessFields = computed(() => Object.entries(serviceProjects.value.find(item => item.projectId === serviceProjectId.value)?.businessKey ?? {}));
 const oldPath = ref<string>();
 const fieldForm = reactive({ path: '', label: '', format: 'text' as Format, collection: '', group: '', required: false, example: '', numberFormat: '', fieldId: '', sourceKind: 'legacy' as NonNullable<Field['sourceKind']>, datasetId: '', viewId: '', sourceFieldId: '', parameterId: '', unit: '', grain: '', constantValue: '', pageField: 'number' as NonNullable<Field['pageField']> });
 const regionForm = reactive({ id: '', name: '', source: '', parentId: '', start: 1, end: 1, empty: 'keep' as 'keep' | 'remove' });
-const viewText = ref('');
-const viewForm = reactive({ viewId: 'view.new', label: '新数据视图', version: '0.1.0', sourceDatasetId: '', outputFields: '' });
-const viewStep = reactive({ kind: 'filter' as 'filter' | 'sort' | 'group' | 'project' | 'pivot' | 'applyFunction', fieldId: '', operator: 'eq' as 'eq' | 'neq' | 'gt' | 'gte' | 'lt' | 'lte' | 'in' | 'contains' | 'isNull', value: '', direction: 'asc' as 'asc' | 'desc', configJson: '' });
 const pageForm = reactive({ pageDefinitionId: '', regionId: '', label: '主表', pageType: 'main' as PageDefinition['pageType'], paginationMode: 'fixed' as NonNullable<PageDefinition['paginationMode']>, continuationOf: '', paperSize: 'A4' as PageDefinition['paperSize'], orientation: 'portrait' as PageDefinition['orientation'], customWidth: 210, customHeight: 297, top: 10, right: 10, bottom: 10, left: 10, printRow: 1, printCol: 1, printRows: 60, printCols: 12, repeatHeaderRows: '', imagePlacementsJson: '[]', regionLabel: '明细区域', regionKind: 'detail' as PageDefinition['regions'][number]['kind'], viewId: '', paginationGroupId: 'certificate-groups', groupBy: '', recordHeight: 1, capacityRows: 0, emptyPolicy: 'keep' as 'keep' | 'hide', keepGroupsTogether: true, oversizedGroupPolicy: 'error' as 'error' | 'split-records', orderByJson: '[]', mergeFieldIds: '', hideRepeatedFieldIds: '', repeatGroupFieldIds: '', repeatOn: 'all' as 'all' | 'first' | 'last', appendixIfViewHasRecords: '', blankRows: 'keep' as 'keep' | 'remove' });
 const form = reactive({ text: '', field: '', format: 'text' as Format, horizontal: 'left' as 'left' | 'center' | 'right', background: '#FFFFFF', rowHeight: 32, colWidth: 140 });
 const fields = computed(() => documentFields(store.doc));
@@ -87,7 +132,7 @@ function captureServiceError(error: unknown) {
     ...(source.context && typeof source.context === 'object' && !Array.isArray(source.context)
       ? { context: source.context as ReportingErrorShape['context'] } : {}) };
 }
-function perform(action: () => void) { try { action(); } catch (error) { ElMessage.warning(message(error)); } }
+function perform(action: () => void) { try { action(); } catch (error) { if ((error as { context?: unknown }).context) captureServiceError(error); ElMessage.warning(message(error)); } }
 async function performAsync(action: () => Promise<void>) {
   if (busy.value) return; busy.value = true;
   try { await action(); } catch (error) { if (serviceDialog.value || servicePreviewDialog.value) captureServiceError(error); ElMessage.error(message(error)); } finally { busy.value = false; }
@@ -209,45 +254,11 @@ function fieldUsage(path: string) {
   return Object.values(store.doc.cells).filter(cell => cell.binding?.path === path).length
     + otherSheets.reduce((sum, sheet) => sum + Object.values(sheet.document.cells).filter(cell => cell.binding?.path === path).length, 0);
 }
-function loadViewDraft(view?: DataViewDefinition) {
-  const selected = view ?? viewDrafts.value.at(-1) ?? {
-  contractVersion: 2, viewId: 'view.new', label: '新数据视图', version: '0.1.0', sourceDatasetId: '', outputFields: [], steps: [],
-  };
-  Object.assign(viewForm, { viewId: selected.viewId, label: selected.label, version: selected.version, sourceDatasetId: selected.sourceDatasetId, outputFields: selected.outputFields.join(',') });
-  viewText.value = JSON.stringify(selected, null, 2);
-}
-function appendViewStep() { perform(() => {
-  const definition = JSON.parse(viewText.value || '{}') as Partial<DataViewDefinition>;
-  const steps = Array.isArray(definition.steps) ? definition.steps : [];
-  if (viewStep.kind === 'filter') {
-    if (!viewStep.fieldId.trim()) throw new Error('筛选需要字段 ID');
-    let value: string | number = viewStep.value;
-    if (['gt', 'gte', 'lt', 'lte'].includes(viewStep.operator)) {
-      value = Number(viewStep.value); if (!Number.isFinite(value)) throw new Error('数值筛选请输入有效数字');
-    }
-    steps.push({ op: 'filter', fieldId: viewStep.fieldId.trim(), operator: viewStep.operator, ...(viewStep.operator !== 'isNull' ? { value } : {}) } as DataViewDefinition['steps'][number]);
-  } else if (viewStep.kind === 'sort') {
-    if (!viewStep.fieldId.trim()) throw new Error('排序需要字段 ID');
-    steps.push({ op: 'sort', by: [{ fieldId: viewStep.fieldId.trim(), direction: viewStep.direction }] });
-  } else {
-    const step: unknown = JSON.parse(viewStep.configJson);
-    if (!step || typeof step !== 'object' || Array.isArray(step) || (step as { op?: unknown }).op !== viewStep.kind)
-      throw new Error(`步骤 JSON 的 op 必须是 ${viewStep.kind}`);
-    steps.push(step as DataViewDefinition['steps'][number]);
-  }
-  Object.assign(definition, { contractVersion: 2, viewId: viewForm.viewId.trim(), label: viewForm.label.trim(), version: viewForm.version.trim(),
-    sourceDatasetId: viewForm.sourceDatasetId.trim(), outputFields: viewForm.outputFields.split(',').map(value => value.trim()).filter(Boolean), steps });
-  viewText.value = JSON.stringify(definition, null, 2); ElMessage.success('已追加受控视图步骤');
-}); }
-function saveViewDraft() { perform(() => {
-  const definition = JSON.parse(viewText.value) as Record<string, unknown>;
-  Object.assign(definition, { contractVersion: 2, viewId: viewForm.viewId.trim(), label: viewForm.label.trim(), version: viewForm.version.trim(),
-    sourceDatasetId: viewForm.sourceDatasetId.trim(), outputFields: viewForm.outputFields.split(',').map(value => value.trim()).filter(Boolean) });
-  const value: unknown = definition; validateContract<DataViewDefinition>('dataView', value);
-  store.saveViewDraft(value); ElMessage.success('视图草稿已保存并版本化');
-}); }
 function loadPage(page: PageDefinition, regionId?: string) {
   const region = page.regions.find(item => item.regionId === regionId) ?? page.regions.find(item => item.worksheetId === store.activeWorksheetId);
+  pageRegionRect.value = region ? copy(region.rect) : undefined;
+  pageRegionWorksheetId.value = region?.worksheetId ?? '';
+  if (region && region.worksheetId !== store.activeWorksheetId) store.switchWorksheet(region.worksheetId);
   if (region?.worksheetId === store.activeWorksheetId) store.select(region.rect);
   Object.assign(pageForm, { pageDefinitionId: page.pageDefinitionId, regionId: region?.regionId ?? '', label: page.label,
     pageType: page.pageType, paginationMode: page.paginationMode ?? 'fixed', continuationOf: page.continuationOf ?? '', paperSize: page.paperSize, orientation: page.orientation,
@@ -272,6 +283,8 @@ function resetNewPageBounds() {
 function startContinuation(page: PageDefinition) { perform(() => {
   const region = page.regions.find(item => item.kind === 'detail' && item.worksheetId === store.activeWorksheetId);
   if (!region) throw new Error('主页面没有属于当前工作表的明细区');
+  pageRegionRect.value = copy(region.rect);
+  pageRegionWorksheetId.value = region.worksheetId;
   Object.assign(pageForm, { pageDefinitionId: '', regionId: region.regionId, label: `${page.label}续页`, pageType: 'continuation', paginationMode: page.paginationMode ?? 'fixed', continuationOf: page.pageDefinitionId,
     paperSize: page.paperSize, orientation: page.orientation, customWidth: page.customPaperMm?.width ?? 210, customHeight: page.customPaperMm?.height ?? 297,
     top: page.marginsMm.top, right: page.marginsMm.right, bottom: page.marginsMm.bottom, left: page.marginsMm.left,
@@ -285,9 +298,9 @@ function startContinuation(page: PageDefinition) { perform(() => {
     hideRepeatedFieldIds: region.hideRepeatedFieldIds?.join(',') ?? '', repeatGroupFieldIds: region.repeatGroupFieldIds?.join(',') ?? '',
     repeatOn: region.repeatOn ?? 'all', appendixIfViewHasRecords: region.appendixIfViewHasRecords ?? '', blankRows: region.blankRows ?? 'keep' });
 }); }
-function savePageConfiguration() { perform(() => {
+function buildPageConfiguration(): PageDefinition {
   const pageDefinitionId = pageForm.pageDefinitionId || `page.${crypto.randomUUID().replaceAll('-', '')}`;
-  const rect = { r: store.selection.r, c: store.selection.c, rows: store.selection.rows, cols: store.selection.cols };
+  const rect = copy(pageRegionRect.value ?? store.selection);
   const existing = pageDefinitions.value.find(page => page.pageDefinitionId === pageDefinitionId);
   const parent = pageForm.pageType === 'continuation' ? pageDefinitions.value.find(page => page.pageDefinitionId === pageForm.continuationOf) : undefined;
   if (pageForm.pageType === 'continuation' && (!parent || parent.pageType !== 'main')) throw new Error('续页必须引用已保存的主页面');
@@ -295,7 +308,7 @@ function savePageConfiguration() { perform(() => {
   const orderBy: unknown = JSON.parse(pageForm.orderByJson || '[]');
   if (!Array.isArray(orderBy) || orderBy.some(item => !item || typeof item.fieldId !== 'string' || !['asc', 'desc'].includes(item.direction))) throw new Error('排序规则必须是字段 ID 与 asc/desc 方向的数组');
   const fieldIds = (value: string) => [...new Set(value.split(',').map(item => item.trim()).filter(Boolean))];
-  const region = { regionId, worksheetId: store.activeWorksheetId, label: pageForm.regionLabel.trim() || '页面区域', kind: pageForm.regionKind, rect,
+  const region = { regionId, worksheetId: pageRegionWorksheetId.value || store.activeWorksheetId, label: pageForm.regionLabel.trim() || '页面区域', kind: pageForm.regionKind, rect,
     ...(pageForm.regionKind !== 'detail' ? { repeatOn: pageForm.repeatOn } : {}), blankRows: pageForm.blankRows,
     ...(['detail', 'groupHeader', 'groupFooter'].includes(pageForm.regionKind) ? { viewId: pageForm.viewId.trim(), paginationGroupId: pageForm.paginationGroupId.trim(),
       groupBy: pageForm.groupBy.split(',').map(value => value.trim()).filter(Boolean), recordHeight: Math.max(1, pageForm.recordHeight),
@@ -320,7 +333,12 @@ function savePageConfiguration() { perform(() => {
     printableRect: { r: pageForm.printRow - 1, c: pageForm.printCol - 1, rows: pageForm.printRows, cols: pageForm.printCols },
     ...(repeatHeaderRows.length ? { repeatHeaderRows } : {}), ...(imagePlacements.length ? { imagePlacements: imagePlacements as PageDefinition['imagePlacements'] } : {}),
     ...(pageForm.continuationOf ? { continuationOf: pageForm.continuationOf } : {}), regions };
-  store.savePageDefinition(definition); pageForm.pageDefinitionId = pageDefinitionId; pageForm.regionId = regionId;
+  return definition;
+}
+function savePageConfiguration() { perform(() => {
+  if (designerMetadata.value && store.templatePackage?.projectId !== serviceProjectId.value) throw new Error('请先将当前模板关联到所选项目，或打开该项目模板');
+  const definition = buildPageConfiguration();
+  store.savePageDefinition(definition); pageForm.pageDefinitionId = definition.pageDefinitionId; pageForm.regionId = definition.regions.at(-1)!.regionId;
   ElMessage.success('页面和区域配置已保存');
 }); }
 function editRegion(region?: RepeatRegion) {
@@ -357,8 +375,8 @@ async function importSelected(event: Event) {
 function loadImportedPackage(template: TemplatePackage) {
   for (const sheet of template.worksheets) sheet.document.fields ??= copy(fields.value);
   store.loadTemplatePackage(template); sheetNameInput.value = store.doc.sheetName;
+  currentView.value = undefined; trialResult.value = undefined; pageRegionRect.value = undefined; pageRegionWorksheetId.value = '';
   Object.assign(pageForm, { pageDefinitionId: '', regionId: '' }); resetNewPageBounds();
-  loadViewDraft(viewDrafts.value[0]);
 }
 function loadSample() { perform(() => { store.loadDocument(createCertificateDocument()); dataText.value = JSON.stringify(certificateData, null, 2); hint.value = '质保书示例包含按炉号分组、嵌套化学分析、力学性能和无损检测。'; }); }
 function readData(): unknown { if (dataText.value.length > 5 * 1024 * 1024) throw new Error('业务 JSON 不能超过 5 MiB'); return JSON.parse(dataText.value); }
@@ -377,8 +395,18 @@ function exportGenerated() { void performAsync(async () => {
   downloadBlob(xlsxBlob(bytes), `${store.doc.name}-生成结果.xlsx`); ElMessage.success('已发起生成结果下载');
 }); }
 function reportingClient() { return new ReportingClient(serviceBaseUrl.value, serviceToken.value); }
+function associateCurrentProject() { perform(() => {
+  if (!designerMetadata.value) throw new Error('项目字段目录尚未载入');
+  store.associateProject(serviceProjectId.value, designerMetadata.value.catalog.catalogVersion);
+  ElMessage.success('当前模板已关联到所选项目');
+}); }
+function saveLocalView(view: DataViewDefinition) { perform(() => {
+  if (!designerMetadata.value || store.templatePackage?.projectId !== serviceProjectId.value) throw new Error('请先将当前模板关联到所选项目，或打开该项目模板');
+  store.saveViewDraft(view); ElMessage.success('视图草稿已保存');
+}); }
 function serviceProjectChanged() {
   const project = serviceProjects.value.find(item => item.projectId === serviceProjectId.value); if (!project) return;
+  if (designerMetadata.value?.project.projectId === project.projectId) { void refreshServiceTemplateState(); return; }
   serviceDocumentType.value = project.documentTypes[0] ?? '';
   const examples: Record<string, string> = {};
   for (const [key, definition] of Object.entries(project.businessKey)) {
@@ -387,10 +415,21 @@ function serviceProjectChanged() {
       : key.toLowerCase().includes('certificaterequestid') ? 'MES-DEMO-9001' : '';
     if (!definition.required && !examples[key]) examples[key] = '';
   }
-  serviceBusinessKeyText.value = JSON.stringify(examples, null, 2);
+  serviceBusinessValues.value = examples;
+  syncServiceBusinessKeyText();
   serviceAutoMatch.value = false; serviceMatchConditionsText.value = '{}'; serviceMatchPriority.value = 100;
   serviceDraftRevision.value = 0; servicePublishedVersion.value = undefined; serviceIdempotencyKey.value = '';
-  serviceViewSummary.value = ''; serviceError.value = '';
+  serviceSelectedTemplateId.value = store.templatePackage?.projectId === project.projectId ? store.templatePackage.packageId : '';
+  serviceSelectedTemplateVersion.value = undefined; serviceTemplateVersions.value = [];
+  serviceHistory.value = undefined; serviceHistoryPage.value = 1;
+  serviceHistoryQuery.value = ''; serviceHistoryTemplateId.value = ''; serviceHistoryStatus.value = 'all';
+  serviceHistoryFrom.value = ''; serviceHistoryTo.value = '';
+  serviceViewSummary.value = ''; serviceError.value = ''; trialResult.value = undefined;
+  designerMetadata.value = undefined; currentView.value = undefined; currentViewError.value = '';
+  const requestedProject = project.projectId;
+  void reportingClient().getDesignerMetadata(requestedProject).then(metadata => {
+    if (serviceProjectId.value === requestedProject) designerMetadata.value = metadata;
+  }).catch(captureServiceError);
   void refreshServiceTemplateState();
 }
 async function openReporting() {
@@ -403,21 +442,79 @@ async function openReporting() {
   } catch (error) { serviceError.value = message(error); }
 }
 async function refreshServiceTemplateState() {
-  if (!serviceProjectId.value || !store.templatePackage) return;
-  const client = reportingClient(), id = store.templatePackage.packageId;
-  try { const draft = await client.getTemplateDraft(serviceProjectId.value, id); serviceDraftRevision.value = draft.revision; }
-  catch (error) { if ((error as { code?: string }).code !== 'DATA_NOT_FOUND') serviceError.value = message(error); else serviceDraftRevision.value = 0; }
-  try { const versions = await client.getTemplateVersions(serviceProjectId.value, id); servicePublishedVersion.value = versions.at(-1)?.version; }
-  catch (error) { if ((error as { code?: string }).code !== 'DATA_NOT_FOUND') serviceError.value = message(error); }
+  if (!serviceProjectId.value) return;
+  const client = reportingClient();
+  try {
+    serviceTemplates.value = await client.getTemplates(serviceProjectId.value);
+    const currentId = store.templatePackage?.projectId === serviceProjectId.value ? store.templatePackage.packageId : '';
+    if (!serviceSelectedTemplateId.value || !serviceTemplates.value.some(item => item.templateId === serviceSelectedTemplateId.value))
+      serviceSelectedTemplateId.value = currentId || serviceTemplates.value[0]?.templateId || '';
+    await selectServiceTemplate(serviceSelectedTemplateId.value);
+  } catch (error) { serviceError.value = message(error); }
+}
+async function selectServiceTemplate(templateId: string) {
+  serviceSelectedTemplateId.value = templateId;
+  serviceSelectedTemplateVersion.value = undefined;
+  serviceTemplateVersions.value = [];
+  serviceDraftRevision.value = 0; servicePublishedVersion.value = undefined;
+  if (!templateId || !serviceProjectId.value) return;
+  const client = reportingClient();
+  try {
+    serviceTemplateVersions.value = await client.getTemplateVersions(serviceProjectId.value, templateId);
+    const summary = serviceTemplates.value.find(item => item.templateId === templateId);
+    serviceSelectedTemplateVersion.value = summary?.latestVersion ?? serviceTemplateVersions.value.at(-1)?.version;
+    servicePublishedVersion.value = summary?.latestVersion;
+  } catch (error) { if ((error as { code?: string }).code !== 'DATA_NOT_FOUND') serviceError.value = message(error); }
+  try {
+    const draft = await client.getTemplateDraft(serviceProjectId.value, templateId);
+    serviceDraftRevision.value = draft.revision;
+  } catch (error) { if ((error as { code?: string }).code !== 'DATA_NOT_FOUND') serviceError.value = message(error); }
+}
+function openServiceTemplateVersion() { void performAsync(async () => {
+  const templateId = serviceSelectedTemplateId.value, version = serviceSelectedTemplateVersion.value;
+  if (!templateId || !version) throw new Error('请选择已发布模板版本');
+  const record = await reportingClient().getTemplateVersion(serviceProjectId.value, templateId, version);
+  store.loadTemplatePackage(record.value);
+  servicePublishedVersion.value = record.version;
+  serviceError.value = '';
+  ElMessage.success(`已打开模板 ${templateId} 第 ${record.version} 版；保存草稿后可在此版本基础上继续修改`);
+}); }
+function openServiceTemplateDraft() { void performAsync(async () => {
+  const templateId = serviceSelectedTemplateId.value;
+  if (!templateId) throw new Error('请选择项目模板');
+  const record = await reportingClient().getTemplateDraft(serviceProjectId.value, templateId);
+  store.loadTemplatePackage(record.value);
+  serviceDraftRevision.value = record.revision; servicePublishedVersion.value = serviceTemplates.value.find(item => item.templateId === templateId)?.latestVersion;
+  serviceError.value = '';
+  ElMessage.success(`已打开模板草稿修订 ${record.revision}`);
+}); }
+function syncServiceBusinessKeyText() { serviceBusinessKeyText.value = JSON.stringify(serviceBusinessValues.value, null, 2); }
+function applyServiceBusinessKeyJson() {
+  const value: unknown = JSON.parse(serviceBusinessKeyText.value);
+  if (!value || typeof value !== 'object' || Array.isArray(value)
+    || Object.values(value as Record<string, unknown>).some(item => typeof item !== 'string'))
+    throw new Error('业务单号参数必须是文本值组成的 JSON 对象');
+  const allowed = new Set(serviceBusinessFields.value.map(([fieldId]) => fieldId));
+  if (Object.keys(value).some(fieldId => !allowed.has(fieldId))) throw new Error('JSON 包含项目未登记的业务参数');
+  serviceBusinessValues.value = Object.fromEntries(serviceBusinessFields.value.map(([fieldId]) => [fieldId,
+    (value as Record<string, string>)[fieldId] ?? '']));
+  ElMessage.success('业务参数表单已从高级 JSON 更新');
 }
 function serviceBusinessKey(): Record<string, string> {
-  const value: unknown = JSON.parse(serviceBusinessKeyText.value);
-  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('业务单号参数必须是 JSON 对象');
-  const entries = Object.entries(value as Record<string, unknown>);
-  if (entries.some(([, item]) => typeof item !== 'string')) throw new Error('业务单号参数值必须使用文本');
-  return Object.fromEntries(entries) as Record<string, string>;
+  const value: Record<string, string> = {};
+  for (const [fieldId, definition] of serviceBusinessFields.value) {
+    const raw = serviceBusinessValues.value[fieldId]?.trim() ?? '';
+    if (definition.required && !raw) throw new Error(`请填写必填业务参数：${definition.label}`);
+    if (!raw) continue;
+    if (definition.type === 'number' && !Number.isFinite(Number(raw))) throw new Error(`${definition.label} 必须是有效数字`);
+    if (definition.type === 'date' && !Number.isFinite(Date.parse(raw))) throw new Error(`${definition.label} 必须是有效日期`);
+    value[fieldId] = raw;
+  }
+  serviceBusinessKeyText.value = JSON.stringify(value, null, 2);
+  return value;
 }
 function importServiceCatalog() { void performAsync(async () => {
+  if (designerMetadata.value) store.associateProject(serviceProjectId.value, designerMetadata.value.catalog.catalogVersion);
   const catalog = await reportingClient().getCatalog(serviceProjectId.value); let count = 0;
   for (const item of catalog.fields) {
     const field = catalogDatasetField(item);
@@ -428,12 +525,33 @@ function importServiceCatalog() { void performAsync(async () => {
   }
   ElMessage.success(`已从项目目录新增 ${count} 个字段，现有手工字段保持不变`);
 }); }
-function testServiceViews() { void performAsync(async () => {
-  const result = await reportingClient().previewViews(serviceProjectId.value, { documentType: serviceDocumentType.value, businessKey: serviceBusinessKey() });
+function testServiceViews(offset: unknown = 0, layout = false) { void performAsync(async () => {
+  try {
+  if (!designerMetadata.value) throw new Error('请先打开项目服务并载入项目数据目录');
+  if (store.templatePackage?.projectId !== serviceProjectId.value) throw new Error('当前模板不属于所选项目，请先打开该项目模板');
+  if (activeTab.value === 'views' && currentViewError.value) throw new Error(currentViewError.value);
+  const drafts = new Map(viewDrafts.value.map(view => [view.viewId, view]));
+  if (activeTab.value === 'views' && currentView.value) drafts.set(currentView.value.viewId, copy(currentView.value));
+  const pageConfiguration = layout ? buildPageConfiguration() : undefined;
+  const template = pageConfiguration ? upsertPageDefinition(store.packageSnapshot(), pageConfiguration) : undefined;
+  const trialTemplate = template ?? store.templatePackage!;
+  const rootIds = activeTab.value === 'views' && currentView.value && !layout ? [currentView.value.viewId]
+    : [...new Set([...trialTemplate.viewRefs.map(ref => ref.viewId),
+      ...(trialTemplate.pageDefinitions ?? []).flatMap(page => page.regions.flatMap(region => [region.viewId, region.appendixIfViewHasRecords].filter((id): id is string => !!id))),
+      ...trialTemplate.worksheets.flatMap(sheet => (sheet.document.fields ?? []).map(field => field.viewId).filter((id): id is string => !!id)),
+      ...(!layout ? [...drafts.keys()] : []),
+    ])];
+  const result = await reportingClient().previewViews(serviceProjectId.value, { documentType: serviceDocumentType.value, businessKey: serviceBusinessKey(),
+    definitions: [...drafts.values()], viewIds: rootIds, offset: typeof offset === 'number' ? offset : 0, limit: 100,
+    ...(template ? { template, pageDefinitionId: pageConfiguration?.pageType === 'main' ? pageConfiguration.pageDefinitionId : pageConfiguration?.continuationOf || undefined } : {}) });
+  trialResult.value = result; trialFingerprint.value = configurationFingerprint.value;
   serviceViewSummary.value = `试算完成：${result.views.length} 个视图，${result.views.reduce<number>((sum, view) => sum + Number((view as { outputRecordCount?: number }).outputRecordCount ?? 0), 0)} 条输出记录，目录版本 ${result.catalogVersion}`;
+  serviceError.value = ''; serviceErrorIssue.value = undefined;
+  } catch (error) { captureServiceError(error); throw error; }
 }); }
 function publishServiceViews() { void performAsync(async () => {
-  const drafts = store.templatePackage?.viewDrafts ?? [];
+  if (store.templatePackage?.projectId !== serviceProjectId.value) throw new Error('当前模板不属于所选项目');
+  const drafts = [...new Map((store.templatePackage?.viewDrafts ?? []).map(view => [view.viewId, view])).values()];
   if (!drafts.length) throw new Error('当前模板包没有本地视图草稿');
   const client = reportingClient(), published: string[] = [];
   for (const definition of drafts) {
@@ -445,28 +563,37 @@ function publishServiceViews() { void performAsync(async () => {
     published.push(`${definition.viewId}@${result.version}`);
   }
   serviceViewSummary.value = `已发布 ${published.length} 个项目视图：${published.join('、')}`;
+  designerMetadata.value = await client.getDesignerMetadata(serviceProjectId.value);
 }); }
 function saveServiceTemplate() { void performAsync(async () => {
   if (!store.templatePackage) throw new Error('请先导入 Excel 模板或创建模板包');
+  if (store.templatePackage.projectId !== 'unassigned' && store.templatePackage.projectId !== serviceProjectId.value) throw new Error('当前模板属于其他项目，请先打开所选项目模板');
   const template = store.packageSnapshot() as ReportingTemplatePackage;
   template.projectId = serviceProjectId.value; template.status = 'draft';
+  if (designerMetadata.value) template.catalogVersion = designerMetadata.value.catalog.catalogVersion;
   const saved = await reportingClient().saveTemplateDraft(serviceProjectId.value, template, serviceDraftRevision.value);
+  if (designerMetadata.value) store.associateProject(serviceProjectId.value, designerMetadata.value.catalog.catalogVersion);
+  serviceSelectedTemplateId.value = template.packageId;
   serviceDraftRevision.value = saved.revision; servicePublishedVersion.value = undefined;
+  await refreshServiceTemplateState();
   serviceError.value = ''; ElMessage.success(`模板草稿已保存，修订号 ${saved.revision}`);
 }); }
 function publishServiceTemplate() { void performAsync(async () => {
+  if (!store.templatePackage || store.templatePackage.packageId !== serviceSelectedTemplateId.value)
+    throw new Error('发布前请先打开对应模板草稿或已发布版本');
   if (!serviceDraftRevision.value) throw new Error('请先将模板草稿保存到服务端');
   const record = await reportingClient().publishTemplate(serviceProjectId.value, store.templatePackage!.packageId);
   servicePublishedVersion.value = record.version; serviceError.value = '';
+  await refreshServiceTemplateState();
   ElMessage.success(`模板已发布为不可变版本 ${record.version}`);
 }); }
 function saveServiceMatchRule() { void performAsync(async () => {
-  if (!servicePublishedVersion.value || !store.templatePackage) throw new Error('请先发布当前模板');
+  if (!servicePublishedVersion.value || !serviceSelectedTemplateId.value) throw new Error('请先选择一个已发布模板');
   const conditions: unknown = JSON.parse(serviceMatchConditionsText.value || '{}');
   if (!conditions || typeof conditions !== 'object' || Array.isArray(conditions)
     || Object.values(conditions as Record<string, unknown>).some(value => typeof value !== 'string'))
     throw new Error('自动匹配条件必须是“业务参数名：文本值”的 JSON 对象');
-  await reportingClient().setTemplateMatchRule(serviceProjectId.value, store.templatePackage.packageId, servicePublishedVersion.value,
+  await reportingClient().setTemplateMatchRule(serviceProjectId.value, serviceSelectedTemplateId.value, servicePublishedVersion.value,
     { documentType: serviceDocumentType.value, conditions: conditions as Record<string, string>, priority: serviceMatchPriority.value });
   serviceError.value = ''; ElMessage.success(`模板版本 ${servicePublishedVersion.value} 的自动匹配规则已保存`);
 }); }
@@ -480,20 +607,57 @@ async function loadServicePage(pageNumber: number) {
   } catch (error) { captureServiceError(error); }
   finally { servicePageLoading.value = false; }
 }
-function generateFromService(mode: 'preview' | 'issue') { void performAsync(async () => {
+function generateFromService() { void performAsync(async () => {
   serviceError.value = ''; serviceErrorIssue.value = undefined;
   if (!serviceAutoMatch.value && !store.templatePackage) throw new Error('请先导入并配置模板');
   if (!serviceAutoMatch.value && !servicePublishedVersion.value) throw new Error('请先保存并发布模板');
   serviceIdempotencyKey.value ||= crypto.randomUUID();
   const request = {
-    mode, documentType: serviceDocumentType.value, businessKey: serviceBusinessKey(),
-    ...(!serviceAutoMatch.value ? { templateRef: { id: store.templatePackage!.packageId, version: servicePublishedVersion.value! } } : { autoMatch: true }),
+    mode: 'preview' as const, documentType: serviceDocumentType.value, businessKey: serviceBusinessKey(),
+    ...(!serviceAutoMatch.value ? { templateRef: { id: serviceSelectedTemplateId.value || store.templatePackage!.packageId,
+      version: servicePublishedVersion.value! } } : { autoMatch: true }),
     idempotencyKey: serviceIdempotencyKey.value,
   } as const;
   const reply = await reportingClient().generate(serviceProjectId.value, request);
   serviceGeneration.value = reply; servicePagePlan.value = reply.snapshot.pagePlan as PagePlan;
   serviceError.value = ''; serviceDialog.value = false; servicePreviewDialog.value = true;
   await loadServicePage(1); serviceIdempotencyKey.value = '';
+}); }
+function confirmServiceIssue() { void performAsync(async () => {
+  const generation = serviceGeneration.value;
+  if (!generation) throw new Error('没有可确认签发的预览快照');
+  if (generation.signoff || generation.mode === 'issue') { ElMessage.success('该预览已确认签发'); return; }
+  const result = await reportingClient().issueGeneration(serviceProjectId.value, generation.generationId);
+  serviceGeneration.value = { ...generation, mode: 'issue', signoff: result.signoff };
+  await loadServiceHistory();
+  ElMessage.success(`已确认签发，原快照保持不变（${result.signoff.actorId}）`);
+}); }
+async function loadServiceHistory(page = serviceHistoryPage.value) {
+  if (!serviceProjectId.value) return;
+  serviceHistoryPage.value = page;
+  serviceHistory.value = await reportingClient().listGenerations(serviceProjectId.value, {
+    page, pageSize: 10, query: serviceHistoryQuery.value.trim() || undefined,
+    templateId: serviceHistoryTemplateId.value || undefined, status: serviceHistoryStatus.value,
+    from: serviceHistoryFrom.value ? `${serviceHistoryFrom.value}T00:00:00.000Z` : undefined,
+    to: serviceHistoryTo.value ? `${serviceHistoryTo.value}T23:59:59.999Z` : undefined,
+  });
+}
+function searchServiceHistory() { void performAsync(() => loadServiceHistory(1)); }
+function searchServiceHistoryPage(page: number) { void performAsync(() => loadServiceHistory(page)); }
+function toggleServiceHistory(event: Event) {
+  if ((event.currentTarget as HTMLDetailsElement).open && !serviceHistory.value) searchServiceHistory();
+}
+function historyBusinessKeyLabel(value: Record<string, string>) { return Object.entries(value).map(([key, item]) => `${key}: ${item}`).join(' · '); }
+function downloadHistoryGeneration(generationId: string) { void performAsync(async () => {
+  const blob = await reportingClient().getFile(serviceProjectId.value, generationId);
+  downloadBlob(blob, `${generationId}.xlsx`);
+  ElMessage.success('已下载历史生成快照');
+}); }
+function openHistoryGeneration(generationId: string) { void performAsync(async () => {
+  const generation = await reportingClient().getGeneration(serviceProjectId.value, generationId);
+  serviceGeneration.value = generation; servicePagePlan.value = generation.snapshot.pagePlan as PagePlan;
+  serviceDialog.value = false; servicePreviewDialog.value = true;
+  await loadServicePage(1);
 }); }
 function downloadServiceGeneration() { void performAsync(async () => {
   if (!serviceGeneration.value) return;
@@ -524,8 +688,17 @@ function reprintServiceGeneration() { void performAsync(async () => {
     ElMessage.success(result.status === 'acknowledged' ? '宿主已从原快照保存重印文件' : '已下载重印文件；使用的是原快照且未重新采集');
   } else { downloadBlob(blob, `${store.doc.name}-${serviceGeneration.value.generationId}-重印.xlsx`); ElMessage.success('已从原生成快照重印，未重新采集数据'); }
 }); }
-function locateServiceIssue(issue: ReportingErrorShape) {
+async function locateServiceIssue(issue: ReportingErrorShape) {
   const context = issue.context;
+  if (context?.viewId) {
+    const view = availableViews.value.find(view => view.viewId === context.viewId);
+    if (view) { activeTab.value = 'views'; await nextTick(); viewEditor.value?.locate(copy(view), typeof context.stepIndex === 'number' ? context.stepIndex : undefined); }
+  }
+  if (context?.regionId) {
+    const page = pageDefinitions.value.find(page => page.regions.some(region => region.regionId === context.regionId));
+    const region = page?.regions.find(region => region.regionId === context.regionId);
+    if (page && region) { activeTab.value = 'pages'; store.switchWorksheet(region.worksheetId); loadPage(page, region.regionId); }
+  }
   if (context?.worksheetId && store.worksheets.some(item => item.worksheetId === context.worksheetId)) store.switchWorksheet(context.worksheetId);
   if (context?.cell && /^[A-Z]+[1-9]\d*$/i.test(context.cell)) {
     addressInput.value = context.cell; goToAddress();
@@ -578,7 +751,7 @@ const previewTable = computed(() => {
       <footer class="statusbar"><span>{{ hint }}</span><b>{{ bindingCount }} 个绑定 · {{ store.doc.repeatRegions?.length ?? 0 }} 个明细区域</b></footer>
     </main>
     <aside class="properties">
-      <div class="tabs"><button :class="{ active: activeTab === 'binding' }" @click="activeTab = 'binding'">单元格</button><button :class="{ active: activeTab === 'repeat' }" @click="activeTab = 'repeat'">旧式扩行</button><button :class="{ active: activeTab === 'views' }" @click="activeTab = 'views'; loadViewDraft()">数据视图</button><button :class="{ active: activeTab === 'pages' }" @click="activeTab = 'pages'">分页配置</button></div>
+      <div class="tabs"><button :class="{ active: activeTab === 'binding' }" @click="activeTab = 'binding'">单元格</button><button :class="{ active: activeTab === 'repeat' }" @click="activeTab = 'repeat'">旧式扩行</button><button :class="{ active: activeTab === 'views' }" @click="activeTab = 'views'">数据视图</button><button :class="{ active: activeTab === 'pages' }" @click="activeTab = 'pages'">分页配置</button></div>
       <template v-if="activeTab === 'binding'">
         <h3>{{ selectedAddress }} <span>{{ store.selection.rows }} × {{ store.selection.cols }}</span></h3><p v-if="selectedRegion" class="region-tip">{{ selectedRegion.name }} · {{ selectedRegion.source }}</p>
         <label>绑定字段<select v-model="form.field"><option value="">请选择字段</option><option v-for="field in fields" :key="field.path" :value="field.path">{{ field.label }} · {{ field.path }}</option></select></label>
@@ -601,41 +774,35 @@ const previewTable = computed(() => {
         <label>空数组处理<select v-model="regionForm.empty"><option value="keep">保留空白样板行</option><option value="remove">移除样板行</option></select></label><button class="wide primary" @click="saveRegion">{{ regionForm.id ? '更新明细区域' : '保存明细区域' }}</button><p class="muted">多个独立区域可使用同一集合；同一行的并列检验列应归入同一区域。已绑定字段的区域不能直接删除。</p>
       </template>
       <template v-else-if="activeTab === 'views'">
-        <h3>数据视图草稿 <span>{{ viewDrafts.length }}</span></h3><p class="muted">筛选、排序可用表单配置；分组汇总、投影、透视与注册函数使用受控 JSON 步骤，不执行任意脚本。正式执行时仍由统一视图引擎校验字段、关系和函数参数。</p>
-        <div v-for="view in viewDrafts" :key="`${view.viewId}:${view.version}`" class="region-card"><strong>{{ view.label }}</strong><small>{{ view.viewId }} · v{{ view.version }} · {{ view.sourceDatasetId }}</small><div class="button-row"><button class="small" @click="loadViewDraft(view)">载入编辑</button></div></div>
-        <div class="two-cols"><label>视图 ID<input v-model="viewForm.viewId" placeholder="view.chemistry" /></label><label>名称<input v-model="viewForm.label" /></label></div><div class="two-cols"><label>版本<input v-model="viewForm.version" /></label><label>来源数据集 ID<input v-model="viewForm.sourceDatasetId" list="view-datasets" placeholder="material.lines" /><datalist id="view-datasets"><option v-for="view in viewDrafts" :key="view.sourceDatasetId" :value="view.sourceDatasetId" /></datalist></label></div>
-        <label>输出字段 ID（逗号分隔）<input v-model="viewForm.outputFields" placeholder="quality.heatNo,quality.carbon" /></label>
-        <h4>添加受控步骤</h4><label>步骤类型<select v-model="viewStep.kind"><option value="filter">筛选条件</option><option value="sort">排序</option><option value="project">字段投影</option><option value="group">分组汇总</option><option value="pivot">行列转换</option><option value="applyFunction">调用公共函数</option></select></label>
-        <template v-if="viewStep.kind === 'filter'"><div class="two-cols"><label>字段 ID<input v-model="viewStep.fieldId" /></label><label>条件<select v-model="viewStep.operator"><option value="eq">等于</option><option value="neq">不等于</option><option value="gt">大于</option><option value="gte">大于等于</option><option value="lt">小于</option><option value="lte">小于等于</option><option value="contains">包含</option><option value="in">属于</option><option value="isNull">为空</option></select></label></div><label>比较值<input v-model="viewStep.value" /></label></template>
-        <template v-else-if="viewStep.kind === 'sort'"><div class="two-cols"><label>字段 ID<input v-model="viewStep.fieldId" /></label><label>方向<select v-model="viewStep.direction"><option value="asc">升序</option><option value="desc">降序</option></select></label></div></template>
-        <label v-else>步骤配置 JSON<textarea v-model="viewStep.configJson" class="json-editor" rows="4" :placeholder="viewStep.kind === 'project' ? '{ &quot;op&quot;: &quot;project&quot;, &quot;fields&quot;: [{ &quot;sourceFieldId&quot;: &quot;source.id&quot;, &quot;outputFieldId&quot;: &quot;view.id&quot; }] }' : viewStep.kind === 'group' ? '{ &quot;op&quot;: &quot;group&quot;, &quot;by&quot;: [&quot;quality.heatNo&quot;], &quot;aggregations&quot;: [{ &quot;operation&quot;: &quot;average&quot;, &quot;fieldId&quot;: &quot;quality.hardness&quot;, &quot;outputFieldId&quot;: &quot;view.average&quot; }] }' : '{ &quot;op&quot;: &quot;applyFunction&quot;, &quot;functionId&quot;: &quot;hardness-by-sample&quot;, &quot;version&quot;: &quot;1.0.0&quot;, &quot;parameters&quot;: {} }'" /></label>
-        <div class="button-row"><button @click="appendViewStep">追加步骤</button><button class="primary" @click="saveViewDraft">校验并保存视图草稿</button></div>
-        <details><summary>视图配置 JSON</summary><textarea v-model="viewText" class="json-editor" rows="12" spellcheck="false" /></details>
+        <h3>数据视图草稿 <span>{{ viewDrafts.length }}</span></h3>
+        <ViewEditor ref="viewEditor" :metadata="designerMetadata" :initial="currentView" :drafts="store.templatePackage?.projectId === serviceProjectId ? viewDrafts : []" @save="saveLocalView" @change="(view, error) => { currentView = view; currentViewError = error; }" @trial="testServiceViews" />
+        <ViewTrialResults v-if="trialResult" :result="trialResult" :stale="trialFingerprint !== configurationFingerprint" @page="offset => testServiceViews(offset)" />
       </template>
       <template v-else>
         <h3>页面与分页配置 <span>{{ pageDefinitions.length }}</span></h3><p class="muted">从当前工作表选区创建固定区、页眉/页尾或明细区。明细容量、联动组键与超大组策略必须明确设置。</p>
         <div v-for="page in pageDefinitions" :key="page.pageDefinitionId" class="region-card"><strong>{{ page.label }} · {{ page.pageType }}</strong><small>{{ page.pageDefinitionId }} · {{ page.paginationMode ?? 'fixed' }} · {{ page.paperSize }} {{ page.orientation === 'portrait' ? '纵向' : '横向' }} · {{ page.regions.length }} 个区域</small><div class="button-row"><button class="small" @click="loadPage(page)">编辑此页</button><button v-if="page.pageType === 'main'" class="small" @click="startContinuation(page)">新建续页</button></div><small v-for="region in page.regions" :key="region.regionId">{{ region.label }}：{{ region.kind }} · {{ region.viewId ?? '固定内容' }} <button class="small" @click="loadPage(page, region.regionId)">编辑区域</button></small></div>
-        <label>页面名称<input v-model="pageForm.label" /></label><div class="two-cols"><label>页面类型<select v-model="pageForm.pageType"><option value="main">主表</option><option value="continuation">续页</option><option value="appendix">附页</option></select></label><label>续接主表 ID<input v-model="pageForm.continuationOf" placeholder="续页/附页填写" /></label></div>
+        <label>页面名称<input v-model="pageForm.label" /></label><div class="two-cols"><label>页面类型<select v-model="pageForm.pageType"><option value="main">主表</option><option value="continuation">续页</option><option value="appendix">附页</option></select></label><label>续接主表<select v-model="pageForm.continuationOf"><option value="">不续接</option><option v-for="page in pageDefinitions.filter(item => item.pageType === 'main')" :key="page.pageDefinitionId" :value="page.pageDefinitionId">{{ page.label }} · {{ page.pageDefinitionId }}</option></select></label></div>
         <label>分页模式<select v-model="pageForm.paginationMode"><option value="fixed">固定版式</option><option value="flow">流式明细</option></select></label><small v-if="pageForm.paginationMode === 'flow'">流式页面使用一个明细区；可添加同视图和组键的分组头、分组尾区域。明细自动按文字高度分配到页面，末页页尾可放合计或声明。</small>
         <div class="two-cols"><label>纸张<select v-model="pageForm.paperSize"><option value="A4">A4</option><option value="A3">A3</option><option value="Letter">Letter</option><option value="Legal">Legal</option><option value="custom">自定义</option></select></label><label>方向<select v-model="pageForm.orientation"><option value="portrait">纵向</option><option value="landscape">横向</option></select></label></div>
         <div v-if="pageForm.paperSize === 'custom'" class="two-cols"><label>纸张宽度 mm<input v-model.number="pageForm.customWidth" type="number" min="1" /></label><label>纸张高度 mm<input v-model.number="pageForm.customHeight" type="number" min="1" /></label></div>
         <div class="two-cols"><label>上边距 mm<input v-model.number="pageForm.top" type="number" min="0" /></label><label>右边距 mm<input v-model.number="pageForm.right" type="number" min="0" /></label><label>下边距 mm<input v-model.number="pageForm.bottom" type="number" min="0" /></label><label>左边距 mm<input v-model.number="pageForm.left" type="number" min="0" /></label></div>
-        <details><summary>打印范围、重复表头与图片定位</summary><div class="two-cols"><label>起始行（从 1 开始）<input v-model.number="pageForm.printRow" type="number" min="1" /></label><label>起始列（从 1 开始）<input v-model.number="pageForm.printCol" type="number" min="1" /></label><label>打印行数<input v-model.number="pageForm.printRows" type="number" min="1" /></label><label>打印列数<input v-model.number="pageForm.printCols" type="number" min="1" /></label></div><label>重复表头行（逗号分隔，从 1 开始）<input v-model="pageForm.repeatHeaderRows" placeholder="例如 1,2,3" /></label><label>图片定位 JSON<textarea v-model="pageForm.imagePlacementsJson" class="json-editor" rows="5" spellcheck="false" placeholder='[{ "imageId": "seal", "resourceId": "image.seal", "worksheetId": "...", "rect": { "r": 0, "c": 0, "rows": 3, "cols": 4 }, "repeatOn": "all" }]' /></label><small>图片引用模板资源 ID；导入工作簿中的图片会随原工作簿保留。新增资源需先加入模板包。</small></details>
+        <details><summary>打印范围、重复表头与图片定位</summary><div class="two-cols"><label>起始行（从 1 开始）<input v-model.number="pageForm.printRow" type="number" min="1" /></label><label>起始列（从 1 开始）<input v-model.number="pageForm.printCol" type="number" min="1" /></label><label>打印行数<input v-model.number="pageForm.printRows" type="number" min="1" /></label><label>打印列数<input v-model.number="pageForm.printCols" type="number" min="1" /></label></div><label>重复表头行（逗号分隔，从 1 开始）<input v-model="pageForm.repeatHeaderRows" placeholder="例如 1,2,3" /></label><ImageResources v-model="pageForm.imagePlacementsJson" :template="store.templatePackage" :selection="store.selection" :worksheet-id="store.activeWorksheetId" @resources="resources => perform(() => store.saveResources(resources))" /><small>导入工作簿中的原有图片继续随原工作簿保留。</small></details>
         <h4>当前选区区域</h4><p class="muted">{{ selectedAddress }} · {{ store.selection.rows }} × {{ store.selection.cols }} 格</p>
         <label>区域名称<input v-model="pageForm.regionLabel" /></label><label>区域类型<select v-model="pageForm.regionKind"><option value="fixed">固定内容</option><option value="header">表头</option><option value="footer">页尾 / 签章 / 声明</option><option v-if="pageForm.paginationMode === 'flow'" value="groupHeader">分组头</option><option v-if="pageForm.paginationMode === 'flow'" value="groupFooter">分组尾</option><option value="detail">重复明细</option></select></label>
-        <template v-if="['detail', 'groupHeader', 'groupFooter'].includes(pageForm.regionKind)"><label>视图标识<input v-model="pageForm.viewId" placeholder="例如 view.chemistry" /></label><label>联动分页组<input v-model="pageForm.paginationGroupId" placeholder="成分与力学区使用相同 ID" /></label><label>业务组键（字段 ID，逗号分隔）<input v-model="pageForm.groupBy" placeholder="certificate.printNo,material.heatNo" /></label><div class="two-cols"><label>每条记录行数<input v-model.number="pageForm.recordHeight" type="number" min="1" /></label><label>额外指定容量行数<input v-model.number="pageForm.capacityRows" type="number" min="0" placeholder="0=扣除页尾后自动计算" /></label></div><label>空数据<select v-model="pageForm.emptyPolicy"><option value="keep">保留区域</option><option value="hide">隐藏区域</option></select></label><label>超大组处理<select v-model="pageForm.oversizedGroupPolicy"><option value="error">报错，不拆组</option><option value="split-records">按记录续页</option></select></label><label class="checkbox"><input v-model="pageForm.keepGroupsTogether" type="checkbox" />业务组尽量保持在同一页</label><details><summary>排序、分组合并与重复值设置</summary><label>排序规则 JSON<textarea v-model="pageForm.orderByJson" class="json-editor" rows="3" placeholder='[{ "fieldId": "quality.heatNo", "direction": "asc" }]' /></label><label>组内纵向合并字段 ID<input v-model="pageForm.mergeFieldIds" placeholder="quality.heatNo" /></label><label>重复时仅显示一次的字段 ID<input v-model="pageForm.hideRepeatedFieldIds" /></label><label>续页重显业务标识字段 ID<input v-model="pageForm.repeatGroupFieldIds" /></label><label v-if="pageForm.pageType === 'appendix'">附页出现条件视图 ID<input v-model="pageForm.appendixIfViewHasRecords" placeholder="该视图有记录时生成附页" /></label></details></template>
+        <template v-if="['detail', 'groupHeader', 'groupFooter'].includes(pageForm.regionKind)"><label>视图标识<select v-model="pageForm.viewId"><option value="">请选择</option><option v-for="view in availableViews" :key="view.viewId" :value="view.viewId">{{ view.label }} · {{ view.viewId }}</option></select></label><label>联动分页组<el-select v-model="pageForm.paginationGroupId" filterable allow-create aria-label="联动分页组"><el-option v-for="id in [...new Set(pageDefinitions.flatMap(page => page.regions.map(region => region.paginationGroupId).filter(Boolean)))]" :key="id" :value="id" :label="id" /></el-select></label><FieldPicker v-model="pageSelections.groupBy" :fields="pageViewFields" multiple label="业务分组字段" /><div class="two-cols"><label>每条记录行数<input v-model.number="pageForm.recordHeight" type="number" min="1" /></label><label>额外指定容量行数<input v-model.number="pageForm.capacityRows" type="number" min="0" placeholder="0=扣除页尾后自动计算" /></label></div><label>空数据<select v-model="pageForm.emptyPolicy"><option value="keep">保留区域</option><option value="hide">隐藏区域</option></select></label><label>超大组处理<select v-model="pageForm.oversizedGroupPolicy"><option value="error">报错，不拆组</option><option value="split-records">按记录续页</option></select></label><label class="checkbox"><input v-model="pageForm.keepGroupsTogether" type="checkbox" />业务组尽量保持在同一页</label><details><summary>排序、分组合并与重复值设置</summary><OrderEditor v-model="pageForm.orderByJson" :fields="pageViewFields" /><FieldPicker v-model="pageSelections.mergeFieldIds" :fields="pageDictionaryFields" multiple label="组内纵向合并字段" /><FieldPicker v-model="pageSelections.hideRepeatedFieldIds" :fields="pageDictionaryFields" multiple label="重复时仅显示一次的字段" /><FieldPicker v-model="pageSelections.repeatGroupFieldIds" :fields="pageDictionaryFields" multiple label="续页重显业务标识字段" /><label v-if="pageForm.pageType === 'appendix'">附页出现条件视图<select v-model="pageForm.appendixIfViewHasRecords"><option value="">无条件</option><option v-for="view in availableViews" :key="view.viewId" :value="view.viewId">{{ view.label }} · {{ view.viewId }}</option></select></label></details></template>
         <template v-else><label>内容出现范围<select v-model="pageForm.repeatOn"><option value="all">每页</option><option value="first">仅首页</option><option value="last">仅末页</option></select></label></template>
         <label>区域补白<select v-model="pageForm.blankRows"><option value="keep">保留模板空白行</option><option value="remove">移除未使用空白行</option></select></label>
-        <div class="button-row"><button class="small" @click="pageForm.pageDefinitionId = ''; pageForm.regionId = ''">新建页面</button><button class="primary" @click="savePageConfiguration">保存页面区域</button></div>
+        <small>区域范围：第 {{ (pageRegionRect ?? store.selection).r + 1 }} 行、第 {{ (pageRegionRect ?? store.selection).c + 1 }} 列，{{ (pageRegionRect ?? store.selection).rows }} 行 × {{ (pageRegionRect ?? store.selection).cols }} 列</small><button @click="pageRegionRect = copy(store.selection); pageRegionWorksheetId = store.activeWorksheetId">将当前选区作为区域范围</button><button @click="pageForm.regionId = ''; pageRegionRect = undefined; pageRegionWorksheetId = ''">新增区域</button><p class="muted">{{ pageCapacityHint }}</p><div class="button-row"><button class="small" @click="pageForm.pageDefinitionId = ''; pageForm.regionId = ''; pageRegionRect = undefined; pageRegionWorksheetId = ''">新建页面</button><button class="primary" @click="savePageConfiguration">保存页面区域</button><button @click="testServiceViews(0, true)">试算当前分页配置</button></div><ViewTrialResults v-if="trialResult?.pagePlan" :result="trialResult" :stale="trialFingerprint !== configurationFingerprint" @page="offset => testServiceViews(offset, true)" />
         <p class="muted">发布到项目服务后，可按固定业务号读取一次数据快照，逐页预览并下载相同分页计划的 Excel。</p>
       </template>
+      <p v-if="serviceError && ['views','pages'].includes(activeTab)" class="error-box">{{ serviceError }} <button v-if="serviceErrorIssue?.context" @click="locateServiceIssue(serviceErrorIssue)">定位配置问题</button></p>
     </aside>
     <el-dialog v-model="fieldDialog" :title="oldPath ? '编辑字段' : '新增字段'" width="620px" :close-on-click-modal="false">
       <div class="two-cols"><label>显示名称<input v-model="fieldForm.label" placeholder="例如：炉号" /></label><label>数据类型<select v-model="fieldForm.format"><option value="text">文本</option><option value="number">数字</option><option value="date">日期</option><option value="boolean">布尔值</option></select></label></div><label>字段路径<input v-model="fieldForm.path" :disabled="!!oldPath && store.worksheets.length > 1" placeholder="例如：chemistry.heatNo" /></label><small v-if="oldPath && store.worksheets.length > 1">字段路径作为多工作表共享别名保持稳定；可在此修改字段来源和显示名称。</small>
       <label>所属数组 / 集合（单值留空）<input v-model="fieldForm.collection" list="collections" placeholder="例如：chemistry 或 chemistry.tests" /><datalist id="collections"><option v-for="source in collections" :key="source" :value="source" /></datalist></label><div class="two-cols"><label>分组<input v-model="fieldForm.group" placeholder="例如：化学成分" /></label><label>Excel 显示格式<input v-model="fieldForm.numberFormat" placeholder="例如：0.000 / yyyy-mm-dd" /></label></div><label>示例值<input v-model="fieldForm.example" /></label><label class="checkbox"><input v-model="fieldForm.required" type="checkbox" />必填，生成时校验缺失值</label>
       <h4>稳定字段来源</h4><div class="two-cols"><label>来源类型<select v-model="fieldForm.sourceKind"><option value="legacy">兼容旧路径</option><option value="dataset">项目数据集</option><option value="view">数据视图</option><option value="constant">常量</option><option value="parameter">运行参数</option><option value="page">页面系统字段</option></select></label><label>单位<input v-model="fieldForm.unit" placeholder="kg、MPa、mm" /></label></div>
-      <div v-if="fieldForm.sourceKind === 'dataset'" class="two-cols"><label>数据集 ID<input v-model="fieldForm.datasetId" placeholder="例如 material.lines" /></label><label>源字段 ID<input v-model="fieldForm.sourceFieldId" /></label></div><div v-if="fieldForm.sourceKind === 'view'" class="two-cols"><label>视图 ID<input v-model="fieldForm.viewId" placeholder="例如 view.chemistry" /></label><label>输出字段 ID<input v-model="fieldForm.sourceFieldId" /></label></div>
-      <label v-if="fieldForm.sourceKind === 'parameter'">参数 ID<input v-model="fieldForm.parameterId" placeholder="例如 issueDate" /></label><label v-if="fieldForm.sourceKind === 'constant' && fieldForm.format !== 'boolean'">常量值<input v-model="fieldForm.constantValue" /></label><label v-if="fieldForm.sourceKind === 'constant' && fieldForm.format === 'boolean'">布尔常量<select v-model="fieldForm.constantValue"><option value="true">true</option><option value="false">false</option></select></label><label v-if="fieldForm.sourceKind === 'page'">页面字段<select v-model="fieldForm.pageField"><option value="number">页码</option><option value="total">总页数</option><option value="recordNumber">整单记录序号</option><option value="groupNumber">业务组序号</option></select></label>
+      <div v-if="fieldForm.sourceKind === 'dataset'" class="two-cols"><label>字段来源数据集<select v-model="fieldForm.datasetId"><option value="">请选择</option><option v-for="dataset in designerMetadata?.project.datasets" :key="dataset.datasetId" :value="dataset.datasetId">{{ dataset.label }} · {{ dataset.datasetId }}</option></select></label><FieldPicker v-model="fieldForm.sourceFieldId" :fields="fieldSourceOptions" label="源字段" /></div><div v-if="fieldForm.sourceKind === 'view'" class="two-cols"><label>字段来源视图<select v-model="fieldForm.viewId"><option value="">请选择</option><option v-for="view in availableViews" :key="view.viewId" :value="view.viewId">{{ view.label }} · {{ view.viewId }}</option></select></label><FieldPicker v-model="fieldForm.sourceFieldId" :fields="fieldSourceOptions" label="源视图输出字段" /></div>
+      <label v-if="fieldForm.sourceKind === 'parameter'">参数 ID<input v-model="fieldForm.parameterId" list="project-parameter-options" /><datalist id="project-parameter-options"><option v-for="(parameter,id) in designerMetadata?.project.businessKey" :key="id" :value="id">{{ parameter.label }}</option></datalist></label><label v-if="fieldForm.sourceKind === 'constant' && fieldForm.format !== 'boolean'">常量值<input v-model="fieldForm.constantValue" /></label><label v-if="fieldForm.sourceKind === 'constant' && fieldForm.format === 'boolean'">布尔常量<select v-model="fieldForm.constantValue"><option value="true">true</option><option value="false">false</option></select></label><label v-if="fieldForm.sourceKind === 'page'">页面字段<select v-model="fieldForm.pageField"><option value="number">页码</option><option value="total">总页数</option><option value="recordNumber">整单记录序号</option><option value="groupNumber">业务组序号</option></select></label>
       <small>字段 ID：{{ fieldForm.fieldId || '保存时自动分配；编辑时保持不变' }} · 数据粒度：<input v-model="fieldForm.grain" placeholder="如 certificate / heat / sample" /></small>
       <template #footer><button v-if="oldPath" class="danger-text" @click="perform(() => { store.deleteField(oldPath!); fieldDialog = false; })">删除字段</button><button @click="fieldDialog = false">取消</button><button class="primary" @click="saveField">保存字段</button></template>
     </el-dialog>
@@ -644,23 +811,42 @@ const previewTable = computed(() => {
       <p class="muted">本流程使用服务端登记的项目数据源、视图和已发布模板。保存草稿后发布不可变版本，再用明确的业务单号生成。</p>
       <div class="two-cols"><label>服务地址<input v-model="serviceBaseUrl" spellcheck="false" placeholder="/api" /></label><label>访问令牌<input v-model="serviceToken" type="password" autocomplete="off" placeholder="仅部署了令牌验证时填写" /></label></div>
       <div class="two-cols"><label>项目<select v-model="serviceProjectId" @change="serviceProjectChanged"><option v-for="project in serviceProjects" :key="project.projectId" :value="project.projectId">{{ project.displayName }} · {{ project.projectId }}</option></select></label><label>单据类型<select v-model="serviceDocumentType"><option v-for="type in serviceProjects.find(item => item.projectId === serviceProjectId)?.documentTypes ?? []" :key="type" :value="type">{{ type }}</option></select></label></div>
-      <label>业务单号参数 JSON<textarea v-model="serviceBusinessKeyText" class="json-editor" rows="4" spellcheck="false" @input="serviceIdempotencyKey = ''" /></label>
-      <div class="button-row"><button @click="importServiceCatalog">导入项目字段目录</button><button @click="testServiceViews">视图试算</button><button @click="refreshServiceTemplateState">刷新版本状态</button></div>
-      <div class="button-row"><button :disabled="!serviceViewDraftCount" @click="publishServiceViews">发布当前模板包中的 {{ serviceViewDraftCount }} 个视图草稿</button></div>
+      <div class="two-cols">
+        <label>项目模板<select v-model="serviceSelectedTemplateId" @change="selectServiceTemplate(serviceSelectedTemplateId)"><option value="">请选择项目模板</option><option v-for="item in serviceTemplates" :key="item.templateId" :value="item.templateId">{{ item.name }} · {{ item.templateId }}{{ item.disabled ? '（已停用，不可生成）' : '' }}</option></select></label>
+        <label>已发布版本<select v-model.number="serviceSelectedTemplateVersion"><option v-for="item in serviceTemplateVersions" :key="item.version" :value="item.version">v{{ item.version }} · {{ item.publishedAt }}</option></select></label>
+      </div>
+      <div class="button-row"><button :disabled="!serviceSelectedTemplateVersion" @click="openServiceTemplateVersion">打开所选版本</button><button :disabled="!serviceDraftRevision" @click="openServiceTemplateDraft">打开草稿</button><button @click="refreshServiceTemplateState">刷新项目模板</button></div>
+      <p v-if="serviceSelectedTemplateId" class="muted">选中：{{ serviceTemplates.find(item => item.templateId === serviceSelectedTemplateId)?.name }} · 草稿修订 {{ serviceDraftRevision || '无' }} · 最新发布 v{{ serviceTemplates.find(item => item.templateId === serviceSelectedTemplateId)?.latestVersion ?? '无' }}。打开旧版本并保存草稿，即可基于该版本继续编辑。</p>
+      <h4>质保书查询参数</h4>
+      <div v-for="[fieldId, definition] in serviceBusinessFields" :key="fieldId" class="two-cols">
+        <label>{{ definition.label }}{{ definition.required ? ' *' : '' }}<input v-model="serviceBusinessValues[fieldId]" :type="definition.type === 'date' ? 'date' : 'text'" :required="definition.required" :placeholder="fieldId" @input="serviceIdempotencyKey = ''; syncServiceBusinessKeyText()" /></label>
+        <small class="muted">参数：{{ fieldId }} · {{ definition.type }}{{ definition.required ? ' · 必填' : ' · 可选' }}</small>
+      </div>
+      <details><summary>高级参数 JSON</summary><p class="muted">通常填写上方表单即可。高级 JSON 只接受当前项目已登记的参数和文本值。</p><textarea v-model="serviceBusinessKeyText" class="json-editor" rows="4" spellcheck="false" /><button @click="applyServiceBusinessKeyJson">应用 JSON 到表单</button></details>
+      <div class="button-row"><button v-if="store.templatePackage?.projectId === 'unassigned'" :disabled="!designerMetadata" @click="associateCurrentProject">将当前模板关联到所选项目</button><button @click="importServiceCatalog">导入项目字段目录</button><button @click="testServiceViews">视图试算</button><button @click="refreshServiceTemplateState">刷新版本状态</button></div>
+      <div class="button-row"><button :disabled="busy || !serviceViewDraftCount" @click="publishServiceViews">发布当前模板包中的 {{ serviceViewDraftCount }} 个视图草稿</button></div>
       <p v-if="serviceViewSummary" class="muted">{{ serviceViewSummary }}</p>
+<ViewTrialResults v-if="trialResult" :result="trialResult" :stale="trialFingerprint !== configurationFingerprint" @page="offset => testServiceViews(offset)" />
       <div class="import-notice"><strong>当前模板</strong><p>{{ store.templatePackage?.name ?? store.doc.name }} · {{ store.templatePackage?.packageId ?? '请先导入或创建模板包' }}</p><p>服务端草稿修订：{{ serviceDraftRevision }} · 已发布版本：{{ servicePublishedVersion ?? '无' }}</p></div>
-      <div class="button-row"><button :disabled="!serviceProjectId || !store.templatePackage" @click="saveServiceTemplate">保存项目模板草稿</button><button :disabled="!serviceDraftRevision || !store.templatePackage" @click="publishServiceTemplate">发布新版本</button></div>
+      <div class="button-row"><button :disabled="busy || !serviceProjectId || !store.templatePackage" @click="saveServiceTemplate">保存项目模板草稿</button><button :disabled="busy || !serviceDraftRevision || !store.templatePackage" @click="publishServiceTemplate">发布新版本</button></div>
       <label class="checkbox"><input v-model="serviceAutoMatch" type="checkbox" />按项目中已登记的匹配条件自动选择模板</label>
-      <template v-if="store.templatePackage && servicePublishedVersion"><div class="two-cols"><label>自动匹配优先级<input v-model.number="serviceMatchPriority" type="number" min="0" max="1000000" /></label><label>业务条件 JSON<input v-model="serviceMatchConditionsText" spellcheck="false" placeholder='{"customerCode":"CUST-A","productPart":"T"}' /></label></div><button @click="saveServiceMatchRule">登记当前版本的自动匹配条件</button></template>
-      <div class="button-row"><button :disabled="!serviceAutoMatch && !servicePublishedVersion" @click="generateFromService('preview')">{{ serviceAutoMatch ? '自动匹配并预览' : '读取业务数据并预览' }}</button><button class="primary" :disabled="!serviceAutoMatch && !servicePublishedVersion" @click="generateFromService('issue')">正式生成并保存快照</button></div>
+      <template v-if="serviceSelectedTemplateId && servicePublishedVersion"><div class="two-cols"><label>自动匹配优先级<input v-model.number="serviceMatchPriority" type="number" min="0" max="1000000" /></label><label>业务条件 JSON<input v-model="serviceMatchConditionsText" spellcheck="false" placeholder='{"customerCode":"CUST-A","productPart":"T"}' /></label></div><button @click="saveServiceMatchRule">登记所选版本的自动匹配条件</button></template>
+      <div class="button-row"><button class="primary" :disabled="!serviceAutoMatch && (!servicePublishedVersion || serviceTemplates.find(item => item.templateId === serviceSelectedTemplateId)?.disabled)" @click="generateFromService">{{ serviceAutoMatch ? '自动匹配并预览' : '读取业务数据并预览' }}</button></div>
       <p v-if="serviceError" class="error-box">{{ serviceError }} <button v-if="serviceErrorIssue?.context" class="small" @click="locateServiceIssue(serviceErrorIssue)">定位问题 <small>{{ serviceErrorIssue.context.worksheetId ?? '' }} {{ serviceErrorIssue.context.cell ?? serviceErrorIssue.context.regionId ?? '' }} {{ serviceErrorIssue.context.fieldId ?? '' }} {{ serviceErrorIssue.context.recordId ?? '' }}</small></button></p>
+      <details @toggle="toggleServiceHistory"><summary>历史质保书</summary>
+        <div class="two-cols"><label>打印号 / 业务参数<input v-model="serviceHistoryQuery" placeholder="输入打印号或业务键值" /></label><label>模板<select v-model="serviceHistoryTemplateId"><option value="">全部模板</option><option v-for="item in serviceTemplates" :key="item.templateId" :value="item.templateId">{{ item.name }}</option></select></label>
+          <label>状态<select v-model="serviceHistoryStatus"><option value="all">全部</option><option value="preview">预览</option><option value="issue">已签发</option></select></label><label>开始日期<input v-model="serviceHistoryFrom" type="date" /></label><label>结束日期<input v-model="serviceHistoryTo" type="date" /></label></div>
+        <button @click="searchServiceHistory">查询</button>
+        <div v-if="serviceHistory" class="history-list"><div v-for="item in serviceHistory.items" :key="item.generationId" class="region-card"><strong>{{ historyBusinessKeyLabel(item.businessKey) }} · {{ item.status === 'issue' ? '已签发' : '预览' }}</strong><small>{{ item.templateRef.packageId }}@{{ item.templateRef.revision }} · {{ item.pageCount }} 页 · {{ item.createdAt }}</small><small>生成记录 {{ item.generationId }}</small><small v-if="item.signoff">签发于 {{ item.signoff.signedAt }} · 操作者 {{ item.signoff.actorId }}</small><div class="button-row"><button class="small" @click="openHistoryGeneration(item.generationId)">打开预览</button><button class="small" @click="downloadHistoryGeneration(item.generationId)">下载 XLSX</button></div></div><p v-if="!serviceHistory.items.length" class="muted">没有符合条件的记录。</p>
+          <div class="button-row"><button :disabled="serviceHistory.page <= 1" @click="searchServiceHistoryPage(serviceHistory.page - 1)">上一页</button><span>{{ serviceHistory.page }} / {{ Math.max(1, Math.ceil(serviceHistory.total / serviceHistory.pageSize)) }} · {{ serviceHistory.total }} 条</span><button :disabled="serviceHistory.page * serviceHistory.pageSize >= serviceHistory.total" @click="searchServiceHistoryPage(serviceHistory.page + 1)">下一页</button></div></div>
+      </details>
       <template #footer><button @click="serviceDialog = false">关闭</button></template>
     </el-dialog>
     <el-dialog v-model="servicePreviewDialog" title="固定快照的逐页预览" width="94%" top="3vh">
       <p v-if="serviceGeneration" class="muted">生成记录 {{ serviceGeneration.generationId }} · 模板 {{ serviceGenerationTemplateLabel }} · {{ serviceGeneration.mode === 'issue' ? '正式生成' : '预览' }} · {{ serviceGeneration.pageCount }} 页 · 下载与本预览使用同一份页面计划。</p>
       <PagedPreview :page-number="servicePageNumber" :total-pages="serviceGeneration?.pageCount ?? 0" :sheets="servicePageSheets" :resources="servicePageResources" :diagnostics="servicePageDiagnostics" :loading="servicePageLoading" @navigate="loadServicePage" @locate="locateServiceIssue" />
       <p v-if="serviceError" class="error-box">{{ serviceError }} <button v-if="serviceErrorIssue?.context" class="small" @click="locateServiceIssue(serviceErrorIssue)">定位问题 <small>{{ serviceErrorIssue.context.worksheetId ?? '' }} {{ serviceErrorIssue.context.cell ?? serviceErrorIssue.context.regionId ?? '' }} {{ serviceErrorIssue.context.fieldId ?? '' }} {{ serviceErrorIssue.context.recordId ?? '' }}</small></button></p>
-      <template #footer><button @click="servicePreviewDialog = false">关闭</button><button @click="reprintServiceGeneration">按原快照重印</button><button v-if="serviceGeneration?.pdfUrl" :disabled="busy" @click="downloadServicePdf">下载 PDF</button><button class="primary" :disabled="busy || !serviceGeneration" @click="downloadServiceGeneration">下载 XLSX</button></template>
+      <template #footer><button @click="servicePreviewDialog = false">关闭</button><button v-if="serviceGeneration?.mode === 'preview' && !serviceGeneration.signoff" class="primary" :disabled="busy || !serviceGeneration" @click="confirmServiceIssue">确认签发</button><span v-else-if="serviceGeneration?.signoff" class="muted">已由 {{ serviceGeneration.signoff.actorId }} 于 {{ serviceGeneration.signoff.signedAt }} 签发</span><button @click="reprintServiceGeneration">按原快照重印</button><button v-if="serviceGeneration?.pdfUrl" :disabled="busy" @click="downloadServicePdf">下载 PDF</button><button class="primary" :disabled="busy || !serviceGeneration" @click="downloadServiceGeneration">下载 XLSX</button></template>
     </el-dialog>
     <el-dialog v-model="previewDialog" title="生成结果预览" width="92%" top="4vh"><template v-if="generated"><p class="muted">已生成 {{ generated.recordCount }} 条明细（含子记录），共 {{ generated.document.rows }} 行；网页预览与 Excel 均包含完整结果。</p><details v-if="generated.warnings.length" class="import-notice"><summary>{{ generated.warnings.length }} 项数据提示</summary><p v-for="warning in generated.warnings" :key="warning">{{ warning }}</p></details><div class="preview-scroll"><table class="preview-table"><tbody><tr v-for="(row, index) in previewTable" :key="index"><td v-for="cell in row" :key="cell.key" :rowspan="cell.rowspan" :colspan="cell.colspan" :style="cell.style">{{ cell.text }}</td></tr></tbody></table></div></template><template #footer><button @click="previewDialog = false; dataDialog = true">修改数据</button><button class="primary" :disabled="busy || !generated" @click="exportGenerated">下载生成结果 Excel</button></template></el-dialog>
   </div>

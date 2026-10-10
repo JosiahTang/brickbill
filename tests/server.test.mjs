@@ -34,7 +34,8 @@ test('HTTP generation pins a published template, snapshots output, paginates pre
   const directory = await mkdtemp(join(tmpdir(), 'brickbill-reporting-'));
   const runtime = await createLocalReportingRuntime(directory);
   const server = createReportingHttpServer(runtime.service, request => {
-    if (request.headers.authorization === 'Bearer dalipu') return { projectIds: ['dalipu-demo'] };
+    if (request.headers.authorization === 'Bearer dalipu') return { projectIds: ['dalipu-demo'], actorId: 'qa-issuer' };
+    if (request.headers.authorization === 'Bearer no-actor') return { projectIds: ['dalipu-demo'] };
     if (request.headers.authorization === 'Bearer mes') return { projectIds: ['general-mes-demo'] };
     return { projectIds: [] };
   });
@@ -77,6 +78,10 @@ test('HTTP generation pins a published template, snapshots output, paginates pre
     assert.equal(publishedResponse.status, 201);
     const published = await publishedResponse.json(); assert.equal(published.version, 1);
     assert.equal(published.value.viewRefs[0].viewId, 'view.material.lines');
+    const templates = await (await request('/projects/dalipu-demo/templates')).json();
+    assert.ok(templates.some(item => item.templateId === template.packageId && item.latestVersion === 1 && !item.disabled));
+    const loadedVersion = await request(`${templatePath}/versions/1`);
+    assert.equal((await loadedVersion.json()).value.packageId, template.packageId);
     const matchRule = { documentType: 'qualityCertificate', conditions: { productPart: 'T' }, priority: 10 };
     const matchPath = `${templatePath}/versions/1/match-rule`;
     assert.equal((await sendJson(matchPath, 'PUT', matchRule)).status, 200);
@@ -84,10 +89,17 @@ test('HTTP generation pins a published template, snapshots output, paginates pre
     const generationPath = '/projects/dalipu-demo/generations';
     const payload = { mode: 'preview', documentType: 'qualityCertificate', businessKey: { printNo: 'DEMO-CERT-001', productPart: 'T' },
       templateRef: { id: template.packageId, version: 1 }, idempotencyKey: 'certificate-preview-1' };
+    const directIssue = await sendJson(generationPath, 'POST', { ...payload, mode: 'issue', idempotencyKey: 'forbidden-direct-issue' });
+    assert.equal(directIssue.status, 400, 'a formal issue must refer to an already previewed snapshot');
     const generatedResponse = await sendJson(generationPath, 'POST', payload);
     assert.equal(generatedResponse.status, 201, JSON.stringify(await generatedResponse.clone().json()));
     const generated = await generatedResponse.json(); assert.equal(generated.pageCount, 1);
     assert.equal(generated.snapshot.data, undefined, 'status response should not duplicate the stored raw source snapshot');
+    const historyBeforeIssue = await request(`${generationPath}?q=DEMO-CERT-001&status=preview&page=1&pageSize=5`);
+    const historyPage = await historyBeforeIssue.json();
+    assert.equal(historyPage.total, 1);
+    assert.equal(historyPage.items[0].generationId, generated.generationId);
+    assert.equal(historyPage.items[0].businessKey.printNo, 'DEMO-CERT-001');
     const pageResponse = await request(`/projects/dalipu-demo/generations/${generated.generationId}/pages/1`);
     assert.equal(pageResponse.status, 200);
     const page = await pageResponse.json(); assert.equal(page.sheets[0].document.cells['1:0'].text, '2512865');
@@ -104,6 +116,32 @@ test('HTTP generation pins a published template, snapshots output, paginates pre
     const stored = await runtime.service.generation('dalipu-demo', generated.generationId);
     assert.equal(stored.snapshot.data.sourceVersion, 'dalipu-sample-v1');
     assert.equal(stored.snapshot.output.sha256.length, 64);
+    const beforeIssueBytes = await runtime.snapshots.readFile('dalipu-demo', generated.generationId);
+    const missingActor = await sendJson(`/projects/dalipu-demo/generations/${generated.generationId}/issue`, 'POST', {}, 'no-actor');
+    assert.equal(missingActor.status, 403, 'issuance requires the authenticated host to provide an audit identity');
+    const [issuedResponse, duplicateIssueResponse] = await Promise.all([
+      sendJson(`/projects/dalipu-demo/generations/${generated.generationId}/issue`, 'POST', { actorId: 'spoofed-client' }),
+      sendJson(`/projects/dalipu-demo/generations/${generated.generationId}/issue`, 'POST', {}),
+    ]);
+    assert.equal(issuedResponse.status, 200);
+    assert.equal(duplicateIssueResponse.status, 200);
+    const issued = await issuedResponse.json(), duplicateIssued = await duplicateIssueResponse.json();
+    assert.equal(issued.signoff.actorId, 'qa-issuer', 'the signoff identity comes from server authorization, not the request body');
+    assert.equal(duplicateIssued.signoff.signedAt, issued.signoff.signedAt, 'repeated confirmation returns the original signoff');
+    assert.equal((await runtime.service.generation('dalipu-demo', generated.generationId)).mode, 'issue');
+    assert.deepEqual(await runtime.snapshots.readFile('dalipu-demo', generated.generationId), beforeIssueBytes,
+      'confirming issuance reuses the exact preview workbook bytes');
+    const signedHistory = await (await request(`${generationPath}?q=DEMO-CERT-001&status=issue`)).json();
+    assert.equal(signedHistory.total, 1);
+    assert.equal(signedHistory.items[0].signoff.actorId, 'qa-issuer');
+    await rm(join(runtime.snapshots.path('dalipu-demo', generated.generationId), 'history.json'));
+    const upgradedHistory = await (await request(`${generationPath}?q=DEMO-CERT-001&status=issue`)).json();
+    assert.equal(upgradedHistory.items[0].signoff.actorId, 'qa-issuer', 'legacy records backfill the compact history index from their stored snapshot');
+    const futureHistory = await (await request(`${generationPath}?from=2999-01-01T00%3A00%3A00.000Z&page=1&pageSize=1`)).json();
+    assert.equal(futureHistory.total, 0, 'date filtering excludes records outside the requested interval');
+    const signedReprint = await sendJson(`/projects/dalipu-demo/generations/${generated.generationId}/reprint`, 'POST', {});
+    assert.equal((await signedReprint.json()).reusedSnapshot, true);
+    assert.equal((await request(`/projects/dalipu-demo/generations/${generated.generationId}/issue`, 'mes')).status, 403);
 
     if (process.env.REPORTING_PDF_PYTHON && process.env.REPORTING_PDF_FALLBACK_FONT) {
       const priorGate = process.env.REPORTING_PDF_ENABLED_PROJECTS;
@@ -186,6 +224,7 @@ test('HTTP generation pins a published template, snapshots output, paginates pre
     const restarted = await createLocalReportingRuntime(directory);
     const persisted = await restarted.service.generation('dalipu-demo', generated.generationId);
     assert.equal(persisted.snapshot.output.sha256, stored.snapshot.output.sha256);
+    assert.equal(persisted.signoff.actorId, 'qa-issuer', 'signoff metadata survives a service restart');
     assert.deepEqual(await restarted.service.snapshots.readFile('dalipu-demo', generated.generationId),
       new Uint8Array(await (await request(`/projects/dalipu-demo/generations/${generated.generationId}/file`)).arrayBuffer()),
       'restart reads the same generated workbook from the persistent data directory');

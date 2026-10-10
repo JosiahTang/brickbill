@@ -1,0 +1,102 @@
+{
+  "suiteVersion": 1,
+  "suiteId": "dalipu-synthetic-reference-v1",
+  "projectId": "dalipu-demo",
+  "cases": [
+    {
+      "caseId": "single-certificate",
+      "documentType": "qualityCertificate",
+      "businessKey": { "printNo": "DEMO-CERT-001", "productPart": "T" },
+      "sourceSnapshot": "../reporting/dalipu/source.json",
+      "assertions": [
+        {
+          "scope": "dataset",
+          "targetId": "contract.info",
+          "expectedCount": 1,
+          "keyFields": ["contract.saleOrderSubNo"],
+          "records": [
+            {
+              "key": { "contract.saleOrderSubNo": "SO-DEMO-1001" },
+              "values": { "contract.orderNo": "SO-DEMO-1001", "contract.standard": "API 5CT", "contract.heatTreatment": "Q&T" }
+            }
+          ]
+        },
+        {
+          "scope": "dataset",
+          "targetId": "material.lines",
+          "expectedCount": 2,
+          "keyFields": ["material.lineId"],
+          "expectedOrder": [{ "material.lineId": "LINE-01" }, { "material.lineId": "LINE-02" }],
+          "records": [
+            {
+              "key": { "material.lineId": "LINE-01" },
+              "values": { "material.heatNo": "2512865", "material.lotNo": "25706099", "material.pieces": 5, "material.length": 58.38, "material.weight": 3.531 }
+            },
+            {
+              "key": { "material.lineId": "LINE-02" },
+              "values": { "material.heatNo": "2512867", "material.lotNo": "25706095", "material.pieces": 6, "material.length": 70.75, "material.weight": 4.244 }
+            }
+          ]
+        },
+        {
+          "scope": "view",
+          "targetId": "view.certificate-header",
+          "expectedCount": 1,
+          "keyFields": ["cert.printNo", "cert.partFlag"],
+          "records": [
+            {
+              "key": { "cert.printNo": "DEMO-CERT-001", "cert.partFlag": "T" },
+              "values": { "cert.customer": "演示客户甲", "contract.standard": "API 5CT", "contract.heatTreatment": "Q&T" }
+            }
+          ]
+        },
+        {
+          "scope": "view",
+          "targetId": "view.certificate.chemistry-print",
+          "expectedCount": 3,
+          "keyFields": ["chem.analysisId"],
+          "expectedOrder": [{ "chem.analysisId": "C-001-C" }, { "chem.analysisId": "C-001-R" }, { "chem.analysisId": "C-002-R" }],
+          "records": [
+            { "key": { "chem.analysisId": "C-001-R" }, "values": { "chem.analysisType": "R", "chem.C": 0.26 } },
+            { "key": { "chem.analysisId": "C-001-C" }, "values": { "chem.analysisType": "C", "chem.C": 0.25 } },
+            { "key": { "chem.analysisId": "C-002-R" }, "values": { "chem.analysisType": "R", "chem.C": 0.24 } }
+          ]
+        },
+        {
+          "scope": "view",
+          "targetId": "view.certificate.tensile-print",
+          "expectedCount": 3,
+          "keyFields": ["tensile.resultId"],
+          "records": [
+            { "key": { "tensile.resultId": "M-001-T" }, "values": { "tensile.testType": "TENSILE", "tensile.yieldStrength": 627, "tensile.tensileStrength": 731 } },
+            { "key": { "tensile.resultId": "M-001-I" }, "values": { "tensile.testType": "IMPACT", "tensile.yieldStrength": null, "tensile.impactEnergyAverage": 86 } },
+            { "key": { "tensile.resultId": "M-002-T" }, "values": { "tensile.testType": "TENSILE", "tensile.yieldStrength": 618, "tensile.tensileStrength": 720 } }
+          ]
+        },
+        {
+          "scope": "view",
+          "targetId": "view.certificate.hardness-print",
+          "expectedCount": 2,
+          "keyFields": ["hardness.sample.sampleId"],
+          "expectedOrder": [{ "hardness.sample.sampleId": "HS-01" }, { "hardness.sample.sampleId": "HS-02" }],
+          "records": [
+            { "key": { "hardness.sample.sampleId": "HS-01" }, "values": { "hardness.q1.out.1": 19.5, "hardness.q1.out.2": 18.9 } },
+            { "key": { "hardness.sample.sampleId": "HS-02" }, "values": { "hardness.q1.out.1": 18.5 } }
+          ]
+        },
+        {
+          "scope": "view",
+          "targetId": "view.certificate.inspection-print",
+          "expectedCount": 3,
+          "keyFields": ["inspection.resultId"],
+          "expectedOrder": [{ "inspection.resultId": "I-001-UT" }, { "inspection.resultId": "I-001-VI" }, { "inspection.resultId": "I-002-UT" }],
+          "records": [
+            { "key": { "inspection.resultId": "I-001-UT" }, "values": { "inspection.itemCode": "UT", "inspection.result": "合格" } },
+            { "key": { "inspection.resultId": "I-001-VI" }, "values": { "inspection.itemCode": "VI", "inspection.result": "合格" } },
+            { "key": { "inspection.resultId": "I-002-UT" }, "values": { "inspection.itemCode": "UT", "inspection.result": "合格" } }
+          ]
+        }
+      ]
+    }
+  ]
+}

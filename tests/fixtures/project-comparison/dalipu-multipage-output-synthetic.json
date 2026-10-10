@@ -1,0 +1,61 @@
+{
+  "suiteVersion": 1,
+  "suiteId": "dalipu-multipage-output-synthetic-v1",
+  "projectId": "dalipu-demo",
+  "cases": [
+    {
+      "caseId": "multipage-with-hardness-appendix",
+      "documentType": "qualityCertificate",
+      "businessKey": { "printNo": "DEMO-CERT-BULK-001", "productPart": "T" },
+      "assertions": [],
+      "generation": {
+        "generationId": "REPLACE_WITH_TEST_GENERATION_ID",
+        "templateRef": { "packageId": "dalipu-certificate-v1", "revision": 1 },
+        "pageCount": 16,
+        "pageTypes": [
+          "main", "main", "main", "main", "main", "main", "main",
+          "main", "main", "main", "main", "main", "main", "main",
+          "appendix", "appendix"
+        ],
+        "pages": [
+          { "pageNumber": 1, "pageType": "main", "allocations": [{ "regionId": "region.material", "viewId": "view.certificate.material-print", "keyFields": ["material.lineId"], "recordKeys": [{ "material.lineId": "BULK-LINE-001" }, { "material.lineId": "BULK-LINE-002" }, { "material.lineId": "BULK-LINE-003" }] }] },
+          { "pageNumber": 2, "pageType": "main", "allocations": [{ "regionId": "region.material", "viewId": "view.certificate.material-print", "keyFields": ["material.lineId"], "recordKeys": [{ "material.lineId": "BULK-LINE-004" }, { "material.lineId": "BULK-LINE-005" }, { "material.lineId": "BULK-LINE-006" }] }] },
+          { "pageNumber": 3, "pageType": "main", "allocations": [{ "regionId": "region.material", "viewId": "view.certificate.material-print", "keyFields": ["material.lineId"], "recordKeys": [{ "material.lineId": "BULK-LINE-007" }, { "material.lineId": "BULK-LINE-008" }, { "material.lineId": "BULK-LINE-009" }] }] },
+          { "pageNumber": 4, "pageType": "main", "allocations": [{ "regionId": "region.material", "viewId": "view.certificate.material-print", "keyFields": ["material.lineId"], "recordKeys": [{ "material.lineId": "BULK-LINE-010" }, { "material.lineId": "BULK-LINE-011" }, { "material.lineId": "BULK-LINE-012" }] }] },
+          { "pageNumber": 5, "pageType": "main", "allocations": [{ "regionId": "region.material", "viewId": "view.certificate.material-print", "keyFields": ["material.lineId"], "recordKeys": [{ "material.lineId": "BULK-LINE-013" }, { "material.lineId": "BULK-LINE-014" }, { "material.lineId": "BULK-LINE-015" }] }] },
+          { "pageNumber": 6, "pageType": "main", "allocations": [{ "regionId": "region.material", "viewId": "view.certificate.material-print", "keyFields": ["material.lineId"], "recordKeys": [{ "material.lineId": "BULK-LINE-016" }, { "material.lineId": "BULK-LINE-017" }, { "material.lineId": "BULK-LINE-018" }] }] },
+          { "pageNumber": 7, "pageType": "main", "allocations": [{ "regionId": "region.material", "viewId": "view.certificate.material-print", "keyFields": ["material.lineId"], "recordKeys": [{ "material.lineId": "BULK-LINE-019" }, { "material.lineId": "BULK-LINE-020" }, { "material.lineId": "BULK-LINE-021" }] }] },
+          { "pageNumber": 8, "pageType": "main", "allocations": [{ "regionId": "region.material", "viewId": "view.certificate.material-print", "keyFields": ["material.lineId"], "recordKeys": [{ "material.lineId": "BULK-LINE-022" }, { "material.lineId": "BULK-LINE-023" }, { "material.lineId": "BULK-LINE-024" }] }] },
+          { "pageNumber": 9, "pageType": "main", "allocations": [{ "regionId": "region.material", "viewId": "view.certificate.material-print", "keyFields": ["material.lineId"], "recordKeys": [{ "material.lineId": "BULK-LINE-025" }, { "material.lineId": "BULK-LINE-026" }, { "material.lineId": "BULK-LINE-027" }] }] },
+          { "pageNumber": 10, "pageType": "main", "allocations": [{ "regionId": "region.material", "viewId": "view.certificate.material-print", "keyFields": ["material.lineId"], "recordKeys": [{ "material.lineId": "BULK-LINE-028" }, { "material.lineId": "BULK-LINE-029" }, { "material.lineId": "BULK-LINE-030" }] }] },
+          { "pageNumber": 11, "pageType": "main", "allocations": [{ "regionId": "region.material", "viewId": "view.certificate.material-print", "keyFields": ["material.lineId"], "recordKeys": [{ "material.lineId": "BULK-LINE-031" }, { "material.lineId": "BULK-LINE-032" }, { "material.lineId": "BULK-LINE-033" }] }] },
+          { "pageNumber": 12, "pageType": "main", "allocations": [{ "regionId": "region.material", "viewId": "view.certificate.material-print", "keyFields": ["material.lineId"], "recordKeys": [{ "material.lineId": "BULK-LINE-034" }, { "material.lineId": "BULK-LINE-035" }, { "material.lineId": "BULK-LINE-036" }] }] },
+          { "pageNumber": 13, "pageType": "main", "allocations": [{ "regionId": "region.material", "viewId": "view.certificate.material-print", "keyFields": ["material.lineId"], "recordKeys": [{ "material.lineId": "BULK-LINE-037" }, { "material.lineId": "BULK-LINE-038" }, { "material.lineId": "BULK-LINE-039" }] }] },
+          { "pageNumber": 14, "pageType": "main", "allocations": [{ "regionId": "region.material", "viewId": "view.certificate.material-print", "keyFields": ["material.lineId"], "recordKeys": [{ "material.lineId": "BULK-LINE-040" }, { "material.lineId": "BULK-LINE-041" }, { "material.lineId": "BULK-LINE-042" }] }] },
+          { "pageNumber": 15, "pageType": "appendix", "allocations": [{ "regionId": "region.hardness", "viewId": "view.certificate.hardness-print", "keyFields": ["hardness.sample.sampleId"], "recordKeys": [{ "hardness.sample.sampleId": "BULK-HS-001" }, { "hardness.sample.sampleId": "BULK-HS-002" }, { "hardness.sample.sampleId": "BULK-HS-003" }, { "hardness.sample.sampleId": "BULK-HS-004" }, { "hardness.sample.sampleId": "BULK-HS-005" }, { "hardness.sample.sampleId": "BULK-HS-006" }, { "hardness.sample.sampleId": "BULK-HS-007" }, { "hardness.sample.sampleId": "BULK-HS-008" }, { "hardness.sample.sampleId": "BULK-HS-009" }, { "hardness.sample.sampleId": "BULK-HS-010" }, { "hardness.sample.sampleId": "BULK-HS-011" }, { "hardness.sample.sampleId": "BULK-HS-012" }] }] },
+          { "pageNumber": 16, "pageType": "appendix", "allocations": [{ "regionId": "region.hardness", "viewId": "view.certificate.hardness-print", "keyFields": ["hardness.sample.sampleId"], "recordKeys": [{ "hardness.sample.sampleId": "BULK-HS-013" }, { "hardness.sample.sampleId": "BULK-HS-014" }, { "hardness.sample.sampleId": "BULK-HS-015" }, { "hardness.sample.sampleId": "BULK-HS-016" }, { "hardness.sample.sampleId": "BULK-HS-017" }, { "hardness.sample.sampleId": "BULK-HS-018" }, { "hardness.sample.sampleId": "BULK-HS-019" }, { "hardness.sample.sampleId": "BULK-HS-020" }, { "hardness.sample.sampleId": "BULK-HS-021" }, { "hardness.sample.sampleId": "BULK-HS-022" }, { "hardness.sample.sampleId": "BULK-HS-023" }, { "hardness.sample.sampleId": "BULK-HS-024" }] }] }
+        ],
+        "xlsx": {
+          "worksheets": [
+            "质保书_001", "质保书_002", "质保书_003", "质保书_004",
+            "质保书_005", "质保书_006", "质保书_007", "质保书_008",
+            "质保书_009", "质保书_010", "质保书_011", "质保书_012",
+            "质保书_013", "质保书_014", "硬度检验附页_015", "硬度检验附页_016"
+          ],
+          "merges": [
+            { "sheet": "质保书_001", "ranges": ["A1:P2"] },
+            { "sheet": "硬度检验附页_016", "ranges": ["A1:P2"] }
+          ],
+          "images": [
+            { "sheet": "质保书_001", "count": 0, "anchors": [] },
+            { "sheet": "硬度检验附页_016", "count": 0, "anchors": [] }
+          ],
+          "pageSetup": [
+            { "sheet": "质保书_001", "orientation": "landscape", "paperSize": 8, "printArea": "A1:P44" },
+            { "sheet": "硬度检验附页_016", "orientation": "landscape", "paperSize": 8, "printArea": "A1:P22" }
+          ]
+        }
+      }
+    }
+  ]
+}

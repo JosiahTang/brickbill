@@ -25,8 +25,9 @@ npm run serve:api
 1. 导入客户 Excel，并在字段字典中绑定字段；多行字段应放入对应的明细区域。
 2. 选择项目后，可从项目目录导入字段，或调用“视图试算”检查固定数据源与转换规则。
 3. 将模板保存为服务端草稿并发布。发布过程校验页面配置，并把模板使用的视图和函数版本固定下来。
-4. 如需自动选模板，为发布版本登记匹配规则，指定单据类型、项目已登记的业务参数条件和优先级。输入业务单号后选择明确版本或自动匹配，再预览或正式生成。
-5. 逐页查看服务端生成的结果；下载、宿主保存与重印使用该次生成的 XLSX。重印读取已保存文件，不重新采集业务表。
+4. 可从项目模板目录打开指定发布版本或草稿；旧发布版本可以载入设计器并另存为新草稿。需要自动选模板时，为发布版本登记业务参数匹配规则。
+5. 从项目字段目录生成打印参数表单，输入质保书打印号等业务键后预览。确认签发只更新该生成记录的签发元数据，读取的业务数据、分页、模板版本和 XLSX 文件均沿用预览快照。
+6. 从历史质保书列表按业务键、模板、状态和日期查找单据，逐页查看、下载或重印；重印不重新采集业务表。
 
 本地模拟项目的示例参数为 `dalipu-demo` 的 `{"printNo":"DEMO-CERT-001","productPart":"T"}`，或 `general-mes-demo` 的 `{"certificateRequestId":"MES-DEMO-9001"}`。
 
@@ -45,7 +46,7 @@ Content-Type: application/json
 {"documentType":"qualityCertificate","businessKey":{"printNo":"DEMO-CERT-001","productPart":"T"}}
 ```
 
-模板以 `PUT /projects/{projectId}/templates/{templateId}/draft` 保存，正文为 `{ "expectedRevision": 0, "template": { ... } }`。首次修订号从 0 开始；响应返回新的修订号。保存冲突返回 `REVISION_CONFLICT`。调用 `POST /projects/{projectId}/templates/{templateId}/publish` 发布不可变版本，可通过 `/versions` 查看历史。
+模板以 `PUT /projects/{projectId}/templates/{templateId}/draft` 保存，正文为 `{ "expectedRevision": 0, "template": { ... } }`。首次修订号从 0 开始；响应返回新的修订号。保存冲突返回 `REVISION_CONFLICT`。`GET /projects/{projectId}/templates` 列出该项目的模板；调用 `POST /projects/{projectId}/templates/{templateId}/publish` 发布不可变版本，可通过 `/versions` 查看历史并读取具体版本。
 
 生成请求必须携带幂等键，可以明确指定已发布模板 ID 和版本，也可以按已登记规则自动匹配：
 
@@ -62,11 +63,13 @@ Content-Type: application/json
 }
 ```
 
-服务返回生成标识、版本摘要、页计划和文件引用。随后可调用：
+服务返回生成标识、版本摘要、页计划和文件引用。预览确认签发调用 `POST /projects/{projectId}/generations/{generationId}/issue`；签发主体必须由身份授权器提供 `actorId`，请求体中的操作者字段不生效。接口幂等并检查原 XLSX 哈希，不会重新采集数据或导出文件。随后可调用：
 
 - `GET /projects/{projectId}/generations/{generationId}` 查询状态和版本摘要。
 - `GET /projects/{projectId}/generations/{generationId}/pages/{pageNumber}` 逐页读取工作表投影、图片资源和诊断。
 - `GET /projects/{projectId}/generations/{generationId}/file` 下载已经保存的 XLSX。
+- `GET /projects/{projectId}/generations?page=1&pageSize=25&q=打印号&templateId=模板ID&status=issue&from=ISO日期&to=ISO日期` 分页查询历史记录；每页最多 100 条。
+- `POST /projects/{projectId}/generations/{generationId}/issue` 将预览快照确认为签发记录；需要认证器返回可信的操作者标识。
 - `GET /projects/{projectId}/generations/{generationId}/file.pdf` 下载已开放项目的固定版式 PDF；生成或状态响应中的 `pdfUrl` 仅在可用时返回。首次生成后缓存 PDF，重印读取同一文件。
 - `POST /projects/{projectId}/generations/{generationId}/reprint` 复用原快照并返回原文件引用。
 
@@ -85,9 +88,24 @@ Content-Type: application/json
 
 ## 快照与文件
 
+### T29 设计目录与草稿试算
+
+`GET /api/projects/{projectId}/designer-metadata` 复用项目鉴权，返回 `project`（数据集、字段和关系）、`catalog`、`views` 和 `functions`（函数描述及参数类型，不含执行代码）。前端用这些元数据生成选择器，不维护第二套字段目录。
+
+原 `POST /api/projects/{projectId}/views/preview` 保持旧请求兼容，并支持以下可选参数：
+
+- `definitions`：最多 100 个合法 `DataViewDefinition`，按视图 ID 覆盖已有规则；重复 ID 拒绝。依赖视图也可以一起传入。传入空数组表示当前模板没有修改的视图。
+- `viewIds`：选择试算根视图，未传时试算合并后的全部视图。
+- `limit` / `offset`：每个视图的主记录展示上限和起始位置；默认 100 / 0，上限 200。返回完整 `inputRecordCount` / `outputRecordCount`、`truncated`、实际执行版本和来源记录标识。每个视图所有嵌套子集合共享 `limit` 条预算，并提供 `childrenTruncated`。
+- `template` / `pageDefinitionId`：传入当前未保存的完整模板包，可一起执行包校验及原分页规划器；模板必须属于当前项目。未指定页面时选取主页面，返回 `pagePlan`；支持既有固定、流式、联动及附页机制，仍受 500 页上限约束。
+
+响应的 `mode` 为 `draft` 或 `published`，`definitions` 列出视图 ID、版本及配置来源。试算只读取当前业务数据，不保存任何视图、模板、生成快照或文件，也不签发。需要冻结结果时使用原生成预览接口；正式生成继续使用已发布模板固定的视图和函数版本。
+
+字段错误返回视图及字段上下文；执行步骤的错误增加从 0 起始的 `stepIndex`，界面显示为第 `stepIndex + 1` 步。分页错误沿用区域/工作表定位信息。
+
 一次生成采用“采集 → 固定视图版本 → 分页计划 → 逐页投影 → XLSX 导出 → 原子保存”的顺序。快照包含原始数据、视图结果、模板及规则版本、业务参数、页计划和 XLSX 的 SHA-256。模板草稿、发布版本、资源与快照按项目目录保存。生成文件、快照和逐页预览数据先写入临时目录，再整体提交。
 
-相同项目及相同幂等键、相同请求参数会返回既有生成记录；相同幂等键不能用于另一组参数。重新采集必须使用新幂等键。重印始终返回已存文件，即使原模板后来停用也可重印。
+相同项目及相同幂等键、相同请求参数会返回既有生成记录；相同幂等键不能用于另一组参数。重新采集必须使用新幂等键。签发仅更新生成记录中的状态、认证操作者和时间，不改写 GenerationSnapshot 或 XLSX。签发元数据与快照记录一起原子保存；当前本地仓库的并发签发锁覆盖单服务进程。重印始终返回已存文件，即使原模板后来停用也可重印。
 
 ## Excel 和宿主边界
 

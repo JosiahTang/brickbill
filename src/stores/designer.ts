@@ -116,6 +116,22 @@ export const useDesignerStore = defineStore('designer', {
     savePageDefinition(definition: PageDefinition) {
       this.templatePackage = upsertPageDefinition(this.packageSnapshot(), definition);
     },
+    associateProject(projectId: string, catalogVersion: string) {
+      const template = this.packageSnapshot();
+      if (template.projectId !== 'unassigned' && template.projectId !== projectId) throw new Error('当前模板已属于其他项目，请先打开所选项目的模板');
+      template.projectId = projectId; template.catalogVersion = catalogVersion; template.revision++;
+      validateTemplatePackage(template); this.templatePackage = template;
+    },
+    saveResources(resources: NonNullable<TemplatePackage['resources']>) {
+      const template = this.packageSnapshot();
+      for (const existing of template.resources ?? []) if (!resources.some(item => item.resourceId === existing.resourceId)
+        && template.pageDefinitions?.some(page => page.imagePlacements?.some(image => image.resourceId === existing.resourceId)))
+        throw new Error(`图片 ${existing.resourceId} 仍被页面引用，请先删除定位并保存页面`);
+      if (resources.some(item => !['image/png', 'image/jpeg'].includes(item.mediaType))) throw new Error('图片资源仅支持 PNG 或 JPEG');
+      if (resources.reduce((sum, item) => sum + item.base64.length * 3 / 4, 0) > 20 * 1024 * 1024) throw new Error('模板图片资源总量不能超过 20 MiB');
+      template.resources = copy(resources); template.revision++;
+      validateTemplatePackage(template); this.templatePackage = template;
+    },
     saveViewDraft(definition: DataViewDefinition) {
       validateContract<DataViewDefinition>('dataView', definition);
       const packageState = this.packageSnapshot(); packageState.viewDrafts ??= [];

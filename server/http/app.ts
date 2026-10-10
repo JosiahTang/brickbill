@@ -1,8 +1,9 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
+import { createHash } from 'node:crypto';
 import type { ReportingService } from '../services/generate.ts';
 import { parseTokenAuthorizations } from '../config.ts';
 
-export interface RequestAccess { projectIds: string[] }
+export interface RequestAccess { projectIds: string[]; actorId?: string }
 export type ReportingAuthorizer = (request: IncomingMessage) => Promise<RequestAccess> | RequestAccess;
 
 function json(response: ServerResponse, status: number, body: unknown): void {
@@ -89,8 +90,27 @@ export function createReportingHttpServer(service: ReportingService, authorize: 
       const context = service.project(projectId);
       const resource = parts[3];
 
+      if (resource === 'designer-metadata' && parts.length === 4 && request.method === 'GET') {
+        json(response, 200, await service.designerMetadata(projectId)); return;
+      }
+
       if (resource === 'catalog' && parts.length === 4 && request.method === 'GET') {
         json(response, 200, context.catalog); return;
+      }
+      if (resource === 'templates' && parts.length === 4 && request.method === 'GET') {
+        json(response, 200, await service.listTemplates(projectId)); return;
+      }
+      if (resource === 'generations' && parts.length === 4 && request.method === 'GET') {
+        const page = Number(url.searchParams.get('page') ?? 1), pageSize = Number(url.searchParams.get('pageSize') ?? 25);
+        const status = url.searchParams.get('status') ?? undefined;
+        if (status !== undefined && !['all', 'preview', 'issue'].includes(status))
+          throw Object.assign(new Error('历史状态仅支持 all、preview 或 issue'), { code: 'CONTRACT_INVALID' });
+        json(response, 200, await service.listGenerations(projectId, {
+          page, pageSize, query: url.searchParams.get('q') ?? undefined,
+          templateId: url.searchParams.get('templateId') ?? undefined,
+          status: status as 'all' | 'preview' | 'issue' | undefined,
+          from: url.searchParams.get('from') ?? undefined, to: url.searchParams.get('to') ?? undefined,
+        })); return;
       }
       if (resource === 'views' && parts.length === 4 && request.method === 'GET') {
         json(response, 200, await service.listViews(projectId)); return;
@@ -167,8 +187,8 @@ export function createReportingHttpServer(service: ReportingService, authorize: 
 
       if (resource === 'generations' && parts.length === 4 && request.method === 'POST') {
         const body = await bodyJson(request);
-        if (!['preview', 'issue'].includes(body.mode) || typeof body.documentType !== 'string' || !body.businessKey || typeof body.businessKey !== 'object')
-          throw Object.assign(new Error('生成请求需要指定 mode、documentType 和 businessKey'), { code: 'CONTRACT_INVALID' });
+        if (body.mode !== 'preview' || typeof body.documentType !== 'string' || !body.businessKey || typeof body.businessKey !== 'object')
+          throw Object.assign(new Error('生成接口只接受 preview；签发必须在检查预览后调用对应快照的 issue 接口'), { code: 'CONTRACT_INVALID' });
         const headerKey = request.headers['x-idempotency-key'];
         const generation = await service.generate(projectId, { ...body,
           idempotencyKey: body.idempotencyKey ?? (typeof headerKey === 'string' ? headerKey : undefined),
@@ -185,6 +205,7 @@ export function createReportingHttpServer(service: ReportingService, authorize: 
           const generation = await service.generation(projectId, generationId); if (!generation) throw Object.assign(new Error('生成记录不存在'), { code: 'DATA_NOT_FOUND' });
           json(response, 200, { generationId, projectId, mode: generation.mode, status: 'complete',
             pageCount: generation.snapshot.pagePlan?.totalPages ?? 0, snapshot: snapshotInfo(generation.snapshot),
+            ...(generation.signoff ? { signoff: generation.signoff } : {}),
             fileUrl: `/api/projects/${encodeURIComponent(projectId)}/generations/${encodeURIComponent(generationId)}/file`,
             ...(await service.pdfAvailable(projectId, generation) ? { pdfUrl: `/api/projects/${encodeURIComponent(projectId)}/generations/${encodeURIComponent(generationId)}/file.pdf` } : {}) }); return;
         }
@@ -216,6 +237,15 @@ export function createReportingHttpServer(service: ReportingService, authorize: 
           json(response, 200, { generationId, projectId, status: 'complete', pageCount: generation.snapshot.pagePlan?.totalPages ?? 0,
             fileUrl: `/api/projects/${encodeURIComponent(projectId)}/generations/${encodeURIComponent(generationId)}/file`, reusedSnapshot: true }); return;
         }
+        if (parts.length === 6 && parts[5] === 'issue' && request.method === 'POST') {
+          await bodyJson(request, 1024);
+          if (!access.actorId?.trim()) throw Object.assign(new Error('当前认证方式没有提供可审计的操作者标识'), { code: 'FORBIDDEN' });
+          const issued = await service.issueGeneration(projectId, generationId, access.actorId);
+          json(response, 200, { generationId, projectId, status: issued.mode, signoff: issued.signoff,
+            pageCount: issued.snapshot.pagePlan?.totalPages ?? 0,
+            fileUrl: `/api/projects/${encodeURIComponent(projectId)}/generations/${encodeURIComponent(generationId)}/file`,
+            reusedSnapshot: true }); return;
+        }
       }
       json(response, 404, { error: { code: 'DATA_NOT_FOUND', message: '接口不存在' } });
     } catch (error) {
@@ -231,10 +261,11 @@ export function loopbackAuthorizer(tokensJson = process.env.REPORTING_TOKENS_JSO
   return request => {
     if (configured) {
       const token = request.headers.authorization?.replace(/^Bearer\s+/i, '');
-      return { projectIds: token ? configured[token] ?? [] : [] };
+      return { projectIds: token ? configured[token] ?? [] : [],
+        ...(token && configured[token] ? { actorId: `token:${createHash('sha256').update(token).digest('hex').slice(0, 16)}` } : {}) };
     }
     const address = request.socket.remoteAddress ?? '';
     const local = address === '127.0.0.1' || address === '::1' || address.startsWith('::ffff:127.');
-    return { projectIds: local ? localProjectIds : [] };
+    return { projectIds: local ? localProjectIds : [], ...(local ? { actorId: 'loopback' } : {}) };
   };
 }

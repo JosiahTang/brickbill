@@ -88,6 +88,14 @@ test('import, drag a field, edit pagination, save, publish and generate matching
   await preview.getByRole('button', { name: '末页' }).click();
   await expect(preview.locator('.page-kind')).toContainText('appendix');
 
+  await preview.getByRole('button', { name: '确认签发', exact: true }).click();
+  await expect(preview).toContainText('已由 loopback');
+  const issuedStatus = await (await request.get(`/api/projects/dalipu-demo/generations/${generationId}`)).json();
+  expect(issuedStatus.mode).toBe('issue');
+  expect(issuedStatus.signoff.actorId).toBe('loopback');
+  expect(issuedStatus.signoff.signedAt).toBeTruthy();
+  expect(issuedStatus.snapshot.output.sha256).toBe(generation.snapshot.output.sha256);
+
   const xlsxDownloadEvent = page.waitForEvent('download');
   await preview.getByRole('button', { name: '下载 XLSX' }).click();
   const xlsx = await downloadedBytes(await xlsxDownloadEvent);
@@ -113,7 +121,14 @@ test('import, drag a field, edit pagination, save, publish and generate matching
   await preview.getByRole('button', { name: '关闭' }).click();
   await page.getByRole('button', { name: '项目服务 / 分页生成' }).click();
   const reopened = dialog(page, '项目数据服务与模板发布');
-  await reopened.getByLabel('业务单号参数 JSON').fill(JSON.stringify({ printNo: 'DEMO-CERT-BULK-001', productPart: 'T' }));
+  await reopened.locator('details').filter({ hasText: '历史质保书' }).locator('summary').click();
+  await expect(reopened).toContainText(generationId);
+  await expect(reopened).toContainText('loopback');
+  const historyDownloadEvent = page.waitForEvent('download');
+  await reopened.getByRole('button', { name: '下载 XLSX' }).first().click();
+  expect(hash(await downloadedBytes(await historyDownloadEvent))).toBe(generation.snapshot.output.sha256);
+  await reopened.getByLabel(/质保书打印号/).fill('DEMO-CERT-BULK-001');
+  await reopened.getByLabel(/产品类别/).fill('T');
   await reopened.getByRole('button', { name: '读取业务数据并预览' }).click();
   await expect(preview).toBeVisible();
   const pages = Number((await preview.locator('.preview-controls strong').innerText()).split('/')[1].trim());

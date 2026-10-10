@@ -34,7 +34,7 @@ export function sortedRecords(records: ViewRecord[], region: PageRegionDefinitio
   });
 }
 function regionsFor(page: PageDefinition): PageRegionDefinition[] { return page.regions.filter(region => region.kind === 'detail'); }
-function remainingCapacity(region: PageRegionDefinition, page: PageDefinition, pageNumber: number, guess: number,
+export function remainingCapacity(region: PageRegionDefinition, page: PageDefinition, pageNumber: number, guess: number,
   options: FixedPaginationOptions, template: TemplatePackage): number {
   const sheet = template.worksheets.find(item => item.worksheetId === region.worksheetId);
   const printEnd = page.printableRect ? page.printableRect.r + page.printableRect.rows : sheet?.document.rows ?? region.rect.r + region.rect.rows;

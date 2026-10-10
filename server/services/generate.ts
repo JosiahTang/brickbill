@@ -7,6 +7,7 @@ import { FunctionRegistry } from '../../src/core/functions/registry.ts';
 import { planPages } from '../../src/core/pagination/index.ts';
 import { projectPagePlan, type ProjectedDocumentPages } from '../../src/core/render/page.ts';
 import { exportPagedXlsx } from '../../src/export/pagedExcel.ts';
+import { validateTemplatePackage } from '../../src/core/templates/package.ts';
 import { exportFixedPdf } from '../pdf/index.ts';
 import type { LocalResourceRepository, LocalSnapshotRepository, LocalTemplateRepository, LocalViewRepository, StoredGeneration, StoredPdfArtifact } from '../repositories/local.ts';
 import { sha256 } from '../repositories/local.ts';
@@ -69,6 +70,46 @@ export class ReportingService {
       documentTypes: project.documentTypes, businessKey: project.businessKey, projectVersion: project.projectVersion }));
   }
 
+  async listTemplates(projectId: string) {
+    this.project(projectId);
+    return this.templates.listTemplates(projectId);
+  }
+
+  async listGenerations(projectId: string, options: { page: number; pageSize: number; query?: string; templateId?: string;
+    status?: 'all' | 'preview' | 'issue'; from?: string; to?: string }) {
+    this.project(projectId);
+    const { page, pageSize } = options;
+    if (!Number.isInteger(page) || page < 1 || !Number.isInteger(pageSize) || pageSize < 1 || pageSize > 100)
+      error('CONTRACT_INVALID', 'contract', '历史查询页码必须大于 0，每页条数须为 1 至 100', { projectId });
+    const date = (value: string | undefined, label: string): number | undefined => {
+      if (value === undefined) return undefined;
+      const parsed = Date.parse(value);
+      if (!Number.isFinite(parsed)) error('CONTRACT_INVALID', 'contract', `${label} 必须是有效日期`, { projectId });
+      return parsed;
+    };
+    const from = date(options.from, '开始日期'), to = date(options.to, '结束日期');
+    if (from !== undefined && to !== undefined && from > to) error('CONTRACT_INVALID', 'contract', '开始日期不能晚于结束日期', { projectId });
+    const query = options.query?.trim().toLocaleLowerCase();
+    const records = (await this.snapshots.list(projectId)).filter(record => {
+      const created = Date.parse(record.createdAt);
+      if (options.templateId && record.templateRef.packageId !== options.templateId) return false;
+      if (options.status && options.status !== 'all' && record.status !== options.status) return false;
+      if (from !== undefined && created < from || to !== undefined && created > to) return false;
+      if (query && !JSON.stringify(record.businessKey).toLocaleLowerCase().includes(query)) return false;
+      return true;
+    });
+    const offset = (page - 1) * pageSize;
+    return {
+      page, pageSize, total: records.length,
+      items: records.slice(offset, offset + pageSize).map(record => ({
+        generationId: record.generationId, documentType: record.documentType,
+        businessKey: record.businessKey, templateRef: record.templateRef, status: record.status,
+        createdAt: record.createdAt, ...(record.signoff ? { signoff: record.signoff } : {}),
+        pageCount: record.pageCount, output: record.output,
+      })),
+    };
+  }
+
   async listViews(projectId: string): Promise<DataViewDefinition[]> {
     const context = this.project(projectId), latest = new Map(context.views.map(view => [view.viewId, view]));
     for (const record of await this.views.listPublished(projectId)) latest.set(record.itemId, record.value);
@@ -89,12 +130,63 @@ export class ReportingService {
     return { definitions: [...selected.values()], roots };
   }
 
-  async previewViews(projectId: string, request: { documentType: string; businessKey: Record<string, string>; viewIds?: string[] }): Promise<{ catalogVersion: string; views: DataViewResult[] }> {
+  async designerMetadata(projectId: string) {
     const context = this.project(projectId);
-    const data = await context.adapter.collect({ documentType: request.documentType, businessKey: request.businessKey });
-    const { definitions, roots } = await this.resolveLatestViews(projectId, request.viewIds);
+    return { project: context.project, catalog: { contractVersion: 2, ...context.catalog },
+      views: await this.listViews(projectId), functions: context.functions.list() };
+  }
+
+  async previewViews(projectId: string, request: { documentType: string; businessKey: Record<string, string>; viewIds?: string[];
+    definitions?: DataViewDefinition[]; limit?: number; offset?: number; template?: TemplatePackage; pageDefinitionId?: string }) {
+    const context = this.project(projectId);
+    if (!request || !context.project.documentTypes.includes(request.documentType) || !request.businessKey || typeof request.businessKey !== 'object'
+      || Array.isArray(request.businessKey) || Object.values(request.businessKey).some(value => typeof value !== 'string')
+      || Object.keys(request.businessKey).some(key => !Object.hasOwn(context.project.businessKey, key))
+      || Object.entries(context.project.businessKey).some(([key, field]) => field.required && !request.businessKey[key]?.trim())
+      || (request.viewIds !== undefined && (!Array.isArray(request.viewIds) || request.viewIds.some(id => typeof id !== 'string') || request.viewIds.length > 100)))
+      error('CONTRACT_INVALID', 'contract', '试算单据类型、业务参数或视图列表无效', { projectId });
+    const limit = request.limit ?? 100, offset = request.offset ?? 0;
+    if (!Number.isInteger(limit) || limit < 1 || limit > 200 || !Number.isInteger(offset) || offset < 0)
+      error('CONTRACT_INVALID', 'contract', '试算每页 1—200 条，起始位置必须是非负整数', { projectId });
+    const available = new Map((await this.listViews(projectId)).map(view => [view.viewId, view]));
+    if (request.definitions !== undefined) {
+      if (!Array.isArray(request.definitions) || request.definitions.length > 100) error('CONTRACT_INVALID', 'contract', '试算草稿最多 100 个视图', { projectId });
+      const seen = new Set<string>();
+      for (const definition of request.definitions) {
+        validateContract<DataViewDefinition>('dataView', definition);
+        if (seen.has(definition.viewId)) error('DUPLICATE_KEY', 'view', `重复试算草稿 ${definition.viewId}`, { viewId: definition.viewId });
+        seen.add(definition.viewId); available.set(definition.viewId, definition);
+      }
+    }
+    const definitions = [...available.values()];
+    const roots = request.viewIds?.length ? request.viewIds : [...available.keys()];
+    // Construct before collection so invalid contracts/functions fail without contacting MES.
     const engine = new DataViewEngine({ project: context.project, catalog: context.catalog.fields as any[], views: definitions, functions: context.functions });
-    return { catalogVersion: context.catalog.catalogVersion, views: engine.executeAll(data, roots) };
+    if (request.template) {
+      if (request.template.projectId !== projectId) error('CONTRACT_INVALID', 'contract', '试算模板不属于当前项目', { projectId });
+      validateTemplatePackage(request.template);
+      this.checkTemplateQuotas(request.template);
+    }
+    const data = await context.adapter.collect({ documentType: request.documentType, businessKey: request.businessKey });
+    const results = engine.executeAll(data, roots);
+    const pageDefinitionId = request.pageDefinitionId ?? request.template?.pageDefinitions?.find(page => page.pageType === 'main')?.pageDefinitionId;
+    const pagePlan = request.template && pageDefinitionId ? planPages(request.template, pageDefinitionId, results) : undefined;
+    if (pagePlan && pagePlan.totalPages > 500) error('RESOURCE_LIMIT_EXCEEDED', 'layout', '试算最多支持 500 页', { projectId });
+    return { catalogVersion: context.catalog.catalogVersion, mode: request.definitions ? 'draft' : 'published', offset, limit,
+      definitions: definitions.map(view => ({ viewId: view.viewId, version: view.version,
+        source: request.definitions?.some(item => item.viewId === view.viewId) ? 'draft' : 'published' })),
+      views: results.map(view => {
+        let childBudget = limit, childrenTruncated = false;
+        const capRecord = (record: DataViewResult['records'][number]): DataViewResult['records'][number] => ({ ...record,
+          ...(record.children ? { children: Object.fromEntries(Object.entries(record.children).map(([key, children]) => {
+            const selected = [];
+            for (const child of children) { if (!childBudget) { childrenTruncated = true; break; } childBudget--; selected.push(capRecord(child)); }
+            return [key, selected];
+          })) } : {}) });
+        const records = view.records.slice(offset, offset + limit).map(capRecord);
+        return { ...view, records, truncated: view.records.length > offset + limit, childrenLimitedTo: limit, childrenTruncated };
+      }),
+      ...(pagePlan ? { pagePlan } : {}) };
   }
 
   async saveTemplateDraft(projectId: string, templateId: string, template: TemplatePackage, expectedRevision: number) {
@@ -204,6 +296,22 @@ export class ReportingService {
 
   async generation(projectId: string, generationId: string): Promise<StoredGeneration | undefined> {
     this.project(projectId); return this.snapshots.get(projectId, generationId);
+  }
+
+  async issueGeneration(projectId: string, generationId: string, actorId: string): Promise<StoredGeneration> {
+    this.project(projectId);
+    if (typeof actorId !== 'string' || !actorId.trim() || actorId.length > 200)
+      error('CONTRACT_INVALID', 'contract', '签发请求需要有效的认证操作者标识', { projectId, generationId });
+    const record = await this.snapshots.get(projectId, generationId);
+    if (!record) error('DATA_NOT_FOUND', 'contract', `生成记录不存在：${generationId}`, { projectId, generationId });
+    if (record.signoff) return record;
+    if (record.mode !== 'preview') error('CONTRACT_INVALID', 'contract', '只有预览记录可以确认签发', { projectId, generationId });
+    const bytes = await this.snapshots.readFile(projectId, generationId);
+    if (!bytes) error('DATA_NOT_FOUND', 'export', '预览 XLSX 文件不存在，无法确认签发', { projectId, generationId });
+    if (record.snapshot.output && (record.snapshot.output.byteLength !== bytes.byteLength
+      || record.snapshot.output.sha256 !== sha256(bytes)))
+      error('CONTRACT_INVALID', 'export', '预览 XLSX 与生成快照的完整性校验不一致，无法确认签发', { projectId, generationId });
+    return this.snapshots.signoff(projectId, generationId, actorId.trim());
   }
 
   async generate(projectId: string, request: GenerationRequest, signal?: AbortSignal): Promise<StoredGeneration> {

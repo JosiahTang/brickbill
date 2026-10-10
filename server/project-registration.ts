@@ -7,21 +7,28 @@ import { createQualityFunctionRegistry } from '../src/core/functions/hardness.ts
 import { DataViewEngine } from '../src/core/views/engine.ts';
 import type { RuntimeProject } from './services/generate.ts';
 
-interface ProjectRegistration {
+export interface ProjectRegistration {
   project: ProjectDefinition;
   adapter: ProjectAdapterDefinition;
   views: DataViewDefinition[];
   source: { endpoint: string; timeoutMs?: number; maxResponseBytes?: number; bearerTokenEnv?: string };
 }
 
-/** Loads declarative projects, reusing the existing HTTP adapter and view engine. */
-export async function loadProjectRegistrations(fileName: string): Promise<Map<string, RuntimeProject>> {
+export async function readProjectRegistrationFile(fileName: string): Promise<ProjectRegistration[]> {
   const source = JSON.parse(await readFile(fileName, 'utf8')) as unknown;
   if (!Array.isArray(source)) throw new Error('Project registration file must be an array');
-  const projects = new Map<string, RuntimeProject>();
   for (const item of source) {
     if (!item || typeof item !== 'object' || Array.isArray(item)) throw new Error('Invalid project registration');
-    const registration = item as ProjectRegistration;
+  }
+  return source as ProjectRegistration[];
+}
+
+/** Loads declarative projects, reusing the existing HTTP adapter and view engine. */
+export async function loadProjectRegistrations(fileName: string, options: { requireSecrets?: boolean; projectId?: string } = {}): Promise<Map<string, RuntimeProject>> {
+  const source = await readProjectRegistrationFile(fileName);
+  const projects = new Map<string, RuntimeProject>();
+  for (const item of source) {
+    const registration = item;
     validateContract<ProjectDefinition>('project', registration.project);
     validateContract<ProjectAdapterDefinition>('projectAdapter', registration.adapter);
     if (!Array.isArray(registration.views) || !registration.source?.endpoint)
@@ -33,7 +40,10 @@ export async function loadProjectRegistrations(fileName: string): Promise<Map<st
     new DataViewEngine({ project: registration.project, catalog: catalog.fields, views: registration.views, functions });
     const tokenEnv = registration.source.bearerTokenEnv;
     if (tokenEnv && !/^[A-Z_][A-Z0-9_]*$/.test(tokenEnv)) throw new Error('Invalid bearerTokenEnv');
-    if (tokenEnv && !process.env[tokenEnv]) throw new Error(`Missing project source token environment variable ${tokenEnv}`);
+    const shouldRequireSecret = options.requireSecrets !== false
+      && (!options.projectId || options.projectId === registration.project.projectId);
+    if (shouldRequireSecret && tokenEnv && !process.env[tokenEnv])
+      throw new Error(`Missing project source token environment variable ${tokenEnv}`);
     const adapter = new HttpProjectAdapter(registration.project, registration.adapter, {
       endpoint: registration.source.endpoint, timeoutMs: registration.source.timeoutMs,
       maxResponseBytes: registration.source.maxResponseBytes,
