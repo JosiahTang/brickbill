@@ -5,6 +5,7 @@ import { base64ToBytes, loadExcel, METADATA_MARKER, METADATA_SHEET } from './imp
 import { PACKAGE_METADATA_MARKER } from './importExcel.ts';
 import type { TemplatePackage } from '../core/contracts/types.ts';
 import { validateTemplatePackage } from '../core/templates/package.ts';
+import { applyWorkbookImageAnchors } from './workbookImages.ts';
 
 export const XLSX_MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
 const argb = (color: string) => 'FF' + color.slice(1).toUpperCase();
@@ -46,8 +47,9 @@ export function pxToExcelWidth(px: number, mdw = 7): number {
   if (!Number.isFinite(mdw) || mdw <= 0) throw new Error('非法 MDW');
   return Math.max(0, Math.round(((px - 5) / mdw) * 256) / 256);
 }
-export async function exportTemplate(doc: TemplateDocument, options: { embed?: boolean; rowMap?: number[] } = {}): Promise<Uint8Array> {
+export async function exportTemplate(doc: TemplateDocument, options: { embed?: boolean; rowMap?: number[]; resources?: TemplatePackage['resources'] } = {}): Promise<Uint8Array> {
   validateDocument(doc);
+  doc = copy(doc);
   const workbook = doc.excelSource?.base64 ? await loadExcel(base64ToBytes(doc.excelSource.base64)) : new ExcelJS.Workbook();
   const oldMeta = workbook.getWorksheet(METADATA_SHEET); if (oldMeta) workbook.removeWorksheet(oldMeta.id);
   workbook.creator = 'Web Template Designer';
@@ -75,6 +77,7 @@ export async function exportTemplate(doc: TemplateDocument, options: { embed?: b
   }
   doc.rowHeightPx.forEach((px, r) => { sheet.getRow(r + 1).height = px * 72 / 96; });
   doc.colWidthPx.forEach((px, c) => { sheet.getColumn(c + 1).width = pxToExcelWidth(px); });
+  applyWorkbookImageAnchors(sheet, doc, options.resources);
 
   // Merge first, then assign a NEW style object for each cell to avoid style sharing.
   for (const m of doc.merges)
@@ -96,6 +99,10 @@ export async function exportTemplate(doc: TemplateDocument, options: { embed?: b
     target.style = excelStyle(source);
     lastRow = Math.max(lastRow, r); lastCol = Math.max(lastCol, c);
   }
+  for (const image of doc.images ?? []) {
+    lastRow = Math.max(lastRow, Math.ceil(image.rect.r + image.rect.rows) - 1);
+    lastCol = Math.max(lastCol, Math.ceil(image.rect.c + image.rect.cols) - 1);
+  }
   if (!existing || options.rowMap) sheet.pageSetup.printArea = `A1:${a1(lastRow, lastCol)}`;
   if (options.embed !== false) {
     const meta = workbook.addWorksheet(METADATA_SHEET, { state: 'veryHidden' });
@@ -113,6 +120,7 @@ export async function exportTemplate(doc: TemplateDocument, options: { embed?: b
 
 export async function exportTemplatePackage(template: TemplatePackage): Promise<Uint8Array> {
   validateTemplatePackage(template);
+  template = copy(template);
   const workbook = template.sourceWorkbook?.base64
     ? await loadExcel(base64ToBytes(template.sourceWorkbook.base64)) : new ExcelJS.Workbook();
   const oldMeta = workbook.getWorksheet(METADATA_SHEET);
@@ -135,6 +143,7 @@ export async function exportTemplatePackage(template: TemplatePackage): Promise<
     sheet.state = item.visible ? 'visible' : 'hidden';
     doc.rowHeightPx.forEach((px, r) => { sheet!.getRow(r + 1).height = px * 72 / 96; });
     doc.colWidthPx.forEach((px, c) => { sheet!.getColumn(c + 1).width = pxToExcelWidth(px); });
+    applyWorkbookImageAnchors(sheet, doc, template.resources ?? []);
     for (const merge of doc.merges) sheet.mergeCells(merge.r + 1, merge.c + 1, merge.r + merge.rows, merge.c + merge.cols);
     let lastRow = 0, lastCol = 0;
     for (const [key, source] of Object.entries(renderCells(doc))) {
@@ -158,6 +167,10 @@ export async function exportTemplatePackage(template: TemplatePackage): Promise<
         margins: { left: matchingPage.marginsMm.left / 25.4, right: matchingPage.marginsMm.right / 25.4,
           top: matchingPage.marginsMm.top / 25.4, bottom: matchingPage.marginsMm.bottom / 25.4,
           header: 0.2, footer: 0.2 } };
+    }
+    for (const image of doc.images ?? []) {
+      lastRow = Math.max(lastRow, Math.ceil(image.rect.r + image.rect.rows) - 1);
+      lastCol = Math.max(lastCol, Math.ceil(image.rect.c + image.rect.cols) - 1);
     }
     if (!sheet.pageSetup.printArea || !sheet.pageSetup.printArea.length)
       sheet.pageSetup.printArea = `A1:${a1(lastRow, lastCol)}`;

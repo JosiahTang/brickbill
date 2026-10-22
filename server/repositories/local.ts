@@ -1,18 +1,32 @@
-import { mkdir, readFile, rename, rm, readdir, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rename, rm, readdir, writeFile, unlink } from 'node:fs/promises';
 import { createHash, randomUUID } from 'node:crypto';
 import { join } from 'node:path';
+import { setTimeout as delay } from 'node:timers/promises';
 import type { DataViewDefinition, GenerationSnapshot, Scalar, TemplatePackage } from '../../src/core/contracts/types.ts';
 
 function key(value: string): string { return Buffer.from(value).toString('base64url'); }
 async function exists(path: string): Promise<boolean> {
   try { await readFile(path); return true; } catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false; throw error; }
 }
-async function atomicJson(path: string, value: unknown): Promise<void> {
+export async function renameWithTransientRetry(source: string, target: string, options: {
+  renameOperation?: typeof rename; wait?: typeof delay;
+} = {}): Promise<void> {
+  const retryable = new Set(['EPERM', 'EBUSY', 'EACCES']);
+  const renameOperation = options.renameOperation ?? rename, wait = options.wait ?? delay;
+  for (let attempt = 0; ; attempt++) {
+    try { await renameOperation(source, target); return; }
+    catch (error) {
+      if (!retryable.has((error as NodeJS.ErrnoException).code ?? '') || attempt >= 4) throw error;
+      await wait(25 * 2 ** attempt);
+    }
+  }
+}
+export async function atomicJson(path: string, value: unknown, retryOptions: Parameters<typeof renameWithTransientRetry>[2] = {}): Promise<void> {
   await mkdir(join(path, '..'), { recursive: true });
   const temporary = `${path}.${randomUUID()}.tmp`;
   try {
     await writeFile(temporary, JSON.stringify(value), { flag: 'wx' });
-    await rename(temporary, path);
+    await renameWithTransientRetry(temporary, path, retryOptions);
   } catch (error) {
     await rm(temporary, { force: true }).catch(() => {});
     throw error;
@@ -49,6 +63,34 @@ async function exclusive<T>(lockKey: string, operation: () => Promise<T>): Promi
 export interface DraftRecord<T> { projectId: string; itemId: string; revision: number; value: T }
 export interface PublishedRecord<T> { projectId: string; itemId: string; version: number; publishedAt: string; value: T }
 export interface TemplateMatchRule { documentType: string; conditions: Record<string, string>; priority: number }
+export interface TemplateMatchCandidate {
+  templateId: string; version: number; disabled: boolean; priority: number; conditions: Record<string, string>;
+}
+
+/** Evaluate an already captured rule set without reading storage again. */
+export function evaluateTemplateMatches(captured: TemplateMatchCandidate[], inputs: Record<string, string>, pendingKeys: string[] = []) {
+  const pending = new Set(pendingKeys);
+  const candidates = captured.map(item => {
+    const mismatchedFields = Object.entries(item.conditions).filter(([key, value]) => !pending.has(key) && inputs[key] !== value).map(([key]) => key);
+    const pendingFields = Object.keys(item.conditions).filter(key => pending.has(key));
+    const matches = !mismatchedFields.length && !pendingFields.length;
+    return { ...structuredClone(item), matches, mismatchedFields, pendingFields,
+      status: item.disabled ? 'disabled' : mismatchedFields.length ? 'mismatch' : pendingFields.length ? 'pendingFacts' : 'matched' };
+  });
+  const activeMatches = candidates.filter(item => !item.disabled && item.matches);
+  const maximumPriority = activeMatches.length ? Math.max(...activeMatches.map(item => item.priority)) : undefined;
+  const winners = maximumPriority === undefined ? [] : activeMatches.filter(item => item.priority === maximumPriority);
+  return { candidates, winner: winners.length === 1 ? winners[0] : undefined, ambiguous: winners.length > 1, maximumPriority };
+}
+
+export function selectTemplateMatch(inspection: ReturnType<typeof evaluateTemplateMatches>, documentType: string) {
+  if (!inspection.winner && !inspection.ambiguous)
+    throw Object.assign(new Error(`没有适用的已发布模板：${documentType}`), { code: 'DATA_NOT_FOUND' });
+  if (inspection.ambiguous || !inspection.winner)
+    throw Object.assign(new Error(`模板自动匹配结果不唯一：优先级 ${inspection.maximumPriority}`), { code: 'TEMPLATE_MATCH_AMBIGUOUS' });
+  const { templateId, version, conditions, priority } = inspection.winner;
+  return { templateId, version, conditions, priority };
+}
 export interface TemplateListItem {
   templateId: string;
   name: string;
@@ -77,8 +119,11 @@ export class LocalTemplateRepository {
   async getDraft(projectId: string, templateId: string): Promise<DraftRecord<TemplatePackage> | undefined> {
     return readJson(join(this.base(projectId, templateId), 'draft.json'));
   }
-  async publish(projectId: string, templateId: string, value: TemplatePackage): Promise<PublishedRecord<TemplatePackage>> {
+  async publish(projectId: string, templateId: string, value: TemplatePackage, expectedDraftRevision: number): Promise<PublishedRecord<TemplatePackage>> {
     return exclusive(`template:${projectId}:${templateId}`, async () => {
+      const draft = await this.getDraft(projectId, templateId);
+      if (!draft || draft.revision !== expectedDraftRevision) throw Object.assign(
+        new Error(`模板草稿修订冲突：预期 ${expectedDraftRevision}，当前 ${draft?.revision ?? 0}`), { code: 'REVISION_CONFLICT' });
       const versionsPath = join(this.base(projectId, templateId), 'versions');
       await mkdir(versionsPath, { recursive: true });
       const files = await readdir(versionsPath);
@@ -126,33 +171,44 @@ export class LocalTemplateRepository {
     return (await readJson<{ disabled: boolean }>(join(this.base(projectId, templateId), 'state.json')))?.disabled ?? false;
   }
   async setMatchRule(projectId: string, templateId: string, version: number, rule: TemplateMatchRule): Promise<TemplateMatchRule> {
-    if (!(await this.getVersion(projectId, templateId, version))) throw Object.assign(new Error(`模板发布版本不存在：${templateId}@${version}`), { code: 'DATA_NOT_FOUND' });
-    const saved = structuredClone(rule);
-    await atomicJson(join(this.base(projectId, templateId), 'matches', `${version}.json`), saved);
-    return saved;
+    return exclusive(`match-rule:${projectId}:${templateId}:${version}`, async () => {
+      if (!(await this.getVersion(projectId, templateId, version))) throw Object.assign(new Error(`模板发布版本不存在：${templateId}@${version}`), { code: 'DATA_NOT_FOUND' });
+      const saved = structuredClone(rule);
+      await atomicJson(join(this.base(projectId, templateId), 'matches', `${version}.json`), saved);
+      return saved;
+    });
   }
   async getMatchRule(projectId: string, templateId: string, version: number): Promise<TemplateMatchRule | undefined> {
     return readJson(join(this.base(projectId, templateId), 'matches', `${version}.json`));
   }
-  async match(projectId: string, documentType: string, businessKey: Record<string, string>): Promise<{ templateId: string; version: number }> {
+  async deleteMatchRule(projectId: string, templateId: string, version: number): Promise<void> {
+    await exclusive(`match-rule:${projectId}:${templateId}:${version}`, async () => {
+      try { await unlink(join(this.base(projectId, templateId), 'matches', `${version}.json`)); }
+      catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
+    });
+  }
+  async inspectMatches(projectId: string, documentType: string, businessKey: Record<string, string>) {
     const projectFolder = join(this.root, key(projectId), 'templates');
-    let templateFolders: string[]; try { templateFolders = await readdir(projectFolder); }
-    catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') templateFolders = []; else throw error; }
-    const candidates: Array<{ templateId: string; version: number; priority: number }> = [];
-    for (const folder of templateFolders) {
+    let folders: string[];
+    try { folders = await readdir(projectFolder); }
+    catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') folders = []; else throw error; }
+    const candidates: TemplateMatchCandidate[] = [];
+    for (const folder of folders) {
       const templateId = Buffer.from(folder, 'base64url').toString();
-      if (!templateId || await this.isDisabled(projectId, templateId)) continue;
-      const versions = await this.listVersions(projectId, templateId), latest = versions.at(-1);
+      if (!templateId) continue;
+      const latest = (await this.listVersions(projectId, templateId)).at(-1);
       if (!latest) continue;
       const rule = await this.getMatchRule(projectId, templateId, latest.version);
-      if (!rule || rule.documentType !== documentType || !Object.entries(rule.conditions).every(([name, value]) => businessKey[name] === value)) continue;
-      candidates.push({ templateId, version: latest.version, priority: rule.priority });
+      if (!rule || rule.documentType !== documentType) continue;
+      candidates.push({ templateId, version: latest.version, disabled: await this.isDisabled(projectId, templateId),
+        priority: rule.priority, conditions: rule.conditions });
     }
-    if (!candidates.length) throw Object.assign(new Error(`没有适用的已发布模板：${documentType}`), { code: 'DATA_NOT_FOUND' });
-    const maxPriority = Math.max(...candidates.map(candidate => candidate.priority));
-    const best = candidates.filter(candidate => candidate.priority === maxPriority);
-    if (best.length !== 1) throw Object.assign(new Error(`模板自动匹配结果不唯一：优先级 ${maxPriority} 命中 ${best.length} 个版本`), { code: 'TEMPLATE_MATCH_AMBIGUOUS' });
-    return { templateId: best[0].templateId, version: best[0].version };
+    return evaluateTemplateMatches(candidates, businessKey);
+  }
+  async match(projectId: string, documentType: string, businessKey: Record<string, string>): Promise<{
+    templateId: string; version: number; conditions: Record<string, string>; priority: number;
+  }> {
+    return selectTemplateMatch(await this.inspectMatches(projectId, documentType, businessKey), documentType);
   }
 }
 
@@ -177,9 +233,24 @@ export class LocalViewRepository {
   async getDraft(projectId: string, viewId: string): Promise<DraftRecord<DataViewDefinition> | undefined> {
     return readJson(join(this.base(projectId, viewId), 'draft.json'));
   }
-  async publish(projectId: string, definition: DataViewDefinition): Promise<PublishedRecord<DataViewDefinition>> {
+  async publish(projectId: string, definition: DataViewDefinition, expectedDraftRevision: number): Promise<PublishedRecord<DataViewDefinition>> {
     return exclusive(`view:${projectId}:${definition.viewId}`, async () => {
+      const draft = await this.getDraft(projectId, definition.viewId);
+      if (!draft || draft.revision !== expectedDraftRevision) throw Object.assign(
+        new Error(`视图草稿修订冲突：预期 ${expectedDraftRevision}，当前 ${draft?.revision ?? 0}`), { code: 'REVISION_CONFLICT' });
       const folder = join(this.base(projectId, definition.viewId), 'versions'); await mkdir(folder, { recursive: true });
+      const comparable = (value: DataViewDefinition) => {
+        const normalize = (item: unknown): unknown => Array.isArray(item) ? item.map(normalize)
+          : item && typeof item === 'object' ? Object.fromEntries(Object.entries(item as Record<string, unknown>)
+            .sort(([a], [b]) => a.localeCompare(b)).map(([name, child]) => [name, normalize(child)])) : item;
+        const { version: _version, ...content } = value;
+        return JSON.stringify(normalize(content));
+      };
+      const existingFiles = await readdir(folder);
+      for (const name of existingFiles.filter(item => item.endsWith('.json'))) {
+        const existing = await readJson<PublishedRecord<DataViewDefinition>>(join(folder, name));
+        if (existing && comparable(existing.value) === comparable(definition)) return existing;
+      }
       const path = join(folder, `${key(definition.version)}.json`);
       if (await exists(path)) throw Object.assign(new Error(`视图版本已存在：${definition.viewId}@${definition.version}`), { code: 'DUPLICATE_KEY' });
       const record = { projectId, itemId: definition.viewId, version: definition.version, publishedAt: new Date().toISOString(), value: structuredClone(definition) };
@@ -226,6 +297,7 @@ export interface StoredGenerationHistory {
   documentType: string;
   businessKey: Record<string, Scalar>;
   templateRef: { packageId: string; revision: number };
+  templateMatch?: GenerationSnapshot['templateMatch'];
   status: 'preview' | 'issue';
   createdAt: string;
   signoff?: { actorId: string; signedAt: string };
@@ -236,6 +308,7 @@ function historySummary(record: StoredGeneration): StoredGenerationHistory {
   return {
     generationId: record.snapshot.generationId, documentType: record.snapshot.data.documentType,
     businessKey: structuredClone(record.snapshot.businessKey), templateRef: structuredClone(record.snapshot.templateRef),
+    ...(record.snapshot.templateMatch ? { templateMatch: structuredClone(record.snapshot.templateMatch) } : {}),
     status: record.mode, createdAt: record.createdAt, ...(record.signoff ? { signoff: structuredClone(record.signoff) } : {}),
     pageCount: record.snapshot.pagePlan?.totalPages ?? 0, ...(record.snapshot.output ? { output: structuredClone(record.snapshot.output) } : {}),
   };
@@ -269,7 +342,7 @@ export class LocalSnapshotRepository {
       await writeFile(join(staging, 'record.json'), serialized, { flag: 'wx' });
       await writeFile(join(staging, 'output.xlsx'), xlsx, { flag: 'wx' });
       await writeFile(join(staging, 'history.json'), JSON.stringify(historySummary(record)), { flag: 'wx' });
-      await rename(staging, target);
+      await renameWithTransientRetry(staging, target);
     } catch (error) { await rm(staging, { recursive: true, force: true }).catch(() => {}); throw error; }
   }
   async get(projectId: string, generationId: string): Promise<StoredGeneration | undefined> {
@@ -379,4 +452,4 @@ export class LocalResourceRepository {
   }
 }
 
-export function sha256(bytes: Uint8Array): string { return createHash('sha256').update(bytes).digest('hex'); }
+export { sha256 } from '../../src/core/reporting/digest.ts';

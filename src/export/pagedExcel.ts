@@ -6,6 +6,7 @@ import type { ErrorContext, TemplatePackage } from '../core/contracts/types.ts';
 import type { ProjectedDocumentPages, ProjectedSheetPage } from '../core/render/page.ts';
 import { base64ToBytes, loadExcel } from './importExcel.ts';
 import { excelStyle, pxToExcelWidth, XLSX_MIME } from './excel.ts';
+import { imageResourceBytes } from './workbookImages.ts';
 
 export interface PagedXlsxResult {
   bytes: Uint8Array;
@@ -90,16 +91,20 @@ function addPlacedImages(workbook: ExcelJS.Workbook, sheet: ExcelJS.Worksheet,
     const extension = resource.mediaType.split('/')[1];
     if (!extension || !['png', 'jpeg', 'gif'].includes(extension))
       throw new ReportingError({ code: 'CONTRACT_INVALID', stage: 'export', message: `Excel 不支持该图片类型：${resource.mediaType}`, context: { fieldId: placement.imageId } });
-    const imageId = workbook.addImage({ base64: resource.base64, extension: extension as 'png' | 'jpeg' | 'gif' });
+    let bytes: Uint8Array;
+    try { bytes = imageResourceBytes(resource); }
+    catch (error) { throw new ReportingError({ code: 'CONTRACT_INVALID', stage: 'export',
+      message: `图片 ${placement.imageId}：${error instanceof Error ? error.message : String(error)}`, context: { worksheetId: page.worksheetId, fieldId: placement.imageId } }); }
+    const imageId = workbook.addImage({ buffer: bytes as never, extension: extension as 'png' | 'jpeg' | 'gif' });
     const { r, c, rows, cols } = placement.rect;
-    const anchor = (col: number, row: number) => ({ col, row, nativeCol: Math.floor(col), nativeRow: Math.floor(row), nativeColOff: 0, nativeRowOff: 0 });
+    const anchor = (col: number, row: number) => ({ col, row });
     sheet.addImage(imageId, { tl: anchor(c, r) as unknown as ExcelJS.ImageRange['tl'], br: anchor(c + cols, r + rows) as unknown as ExcelJS.ImageRange['br'] });
   }
 }
 
 function copySourceImages(source: ExcelJS.Workbook | undefined, targetWorkbook: ExcelJS.Workbook,
   targetSheet: ExcelJS.Worksheet, page: ProjectedSheetPage, template: TemplatePackage): void {
-  if (!source || page.imagePlacements.length) return;
+  if (!source || page.imagePlacements.length || template.worksheets.find(item => item.worksheetId === page.worksheetId)?.document.images !== undefined) return;
   const sourceName = template.worksheets.find(item => item.worksheetId === page.worksheetId)?.document.excelSource?.sheetName
     ?? template.worksheets.find(item => item.worksheetId === page.worksheetId)?.name;
   const sourceSheet = sourceName ? source.getWorksheet(sourceName) : undefined;
@@ -171,13 +176,14 @@ async function verifyPagedOutput(bytes: Uint8Array, template: TemplatePackage, p
       throw new ReportingError({ code: 'CONTRACT_INVALID', stage: 'export', message: 'XLSX 回读校验失败：打印区域不正确', context });
     const sourceName = template.worksheets.find(item => item.worksheetId === page.worksheetId)?.document.excelSource?.sheetName
       ?? template.worksheets.find(item => item.worksheetId === page.worksheetId)?.name;
-    const nativeCount = !page.imagePlacements.length && sourceName ? original?.getWorksheet(sourceName)?.getImages().length ?? 0 : 0;
+    const modeled = template.worksheets.find(item => item.worksheetId === page.worksheetId)?.document.images !== undefined;
+    const nativeCount = !modeled && !page.imagePlacements.length && sourceName ? original?.getWorksheet(sourceName)?.getImages().length ?? 0 : 0;
     const actualImages = sheet.getImages();
     if (actualImages.length !== page.imagePlacements.length + nativeCount)
       throw new ReportingError({ code: 'CONTRACT_INVALID', stage: 'export', message: 'XLSX 回读校验失败：图片数量与模板配置不一致', context });
     const expectedAnchors = page.imagePlacements.length ? page.imagePlacements.map(image => ({
       tl: { col: image.rect.c, row: image.rect.r }, br: { col: image.rect.c + image.rect.cols, row: image.rect.r + image.rect.rows },
-    })) : sourceName ? original?.getWorksheet(sourceName)?.getImages().map(image => image.range) ?? [] : [];
+    })) : !modeled && sourceName ? original?.getWorksheet(sourceName)?.getImages().map(image => image.range) ?? [] : [];
     expectedAnchors.forEach((expected, imageIndex) => {
       const actual = actualImages[imageIndex]?.range;
       if (!actual || Math.abs(actual.tl.col - expected.tl.col) > 0.001 || Math.abs(actual.tl.row - expected.tl.row) > 0.001

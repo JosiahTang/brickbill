@@ -10,7 +10,7 @@ import { exportPagedXlsx } from '../../src/export/pagedExcel.ts';
 import { validateTemplatePackage } from '../../src/core/templates/package.ts';
 import { exportFixedPdf } from '../pdf/index.ts';
 import type { LocalResourceRepository, LocalSnapshotRepository, LocalTemplateRepository, LocalViewRepository, StoredGeneration, StoredPdfArtifact } from '../repositories/local.ts';
-import { sha256 } from '../repositories/local.ts';
+import { sha256, evaluateTemplateMatches, selectTemplateMatch } from '../repositories/local.ts';
 
 function error(code: ConstructorParameters<typeof ReportingError>[0]['code'], stage: ConstructorParameters<typeof ReportingError>[0]['stage'], message: string,
   context?: ConstructorParameters<typeof ReportingError>[0]['context']): never {
@@ -67,7 +67,8 @@ export class ReportingService {
 
   async listProjects(): Promise<unknown[]> {
     return [...this.projects.values()].map(({ project }) => ({ projectId: project.projectId, displayName: project.displayName,
-      documentTypes: project.documentTypes, businessKey: project.businessKey, projectVersion: project.projectVersion }));
+      documentTypes: project.documentTypes, businessKey: project.businessKey, templateMatchFields: project.templateMatchFields ?? {},
+      projectVersion: project.projectVersion }));
   }
 
   async listTemplates(projectId: string) {
@@ -104,6 +105,7 @@ export class ReportingService {
       items: records.slice(offset, offset + pageSize).map(record => ({
         generationId: record.generationId, documentType: record.documentType,
         businessKey: record.businessKey, templateRef: record.templateRef, status: record.status,
+        ...(record.templateMatch ? { templateMatch: record.templateMatch } : {}),
         createdAt: record.createdAt, ...(record.signoff ? { signoff: record.signoff } : {}),
         pageCount: record.pageCount, output: record.output,
       })),
@@ -130,6 +132,54 @@ export class ReportingService {
     return { definitions: [...selected.values()], roots };
   }
 
+  private async resolveTemplateDependencies(projectId: string, source: TemplatePackage) {
+    const template = structuredClone(source);
+    validateContract<TemplatePackage>('templatePackage', template);
+    validateTemplatePackage(template);
+    this.checkTemplateQuotas(template);
+    const availableViews = await this.listViews(projectId);
+    const referenced = new Set(template.viewRefs.map(ref => ref.viewId));
+    for (const page of template.pageDefinitions ?? []) for (const region of page.regions) {
+      if (region.viewId) referenced.add(region.viewId);
+      if (region.appendixIfViewHasRecords) referenced.add(region.appendixIfViewHasRecords);
+    }
+    for (const worksheet of template.worksheets) for (const cell of Object.values(worksheet.document.cells)) if (cell.binding) {
+      const field = worksheet.document.fields?.find(item => item.fieldId === cell.binding!.fieldId || item.path === cell.binding!.path || item.fieldId === cell.binding!.path);
+      if (field?.sourceKind === 'view' && field.viewId) referenced.add(field.viewId);
+      if (field?.sourceKind === 'dataset') {
+        const sourceFieldId = field.sourceFieldId ?? field.fieldId;
+        const candidates = availableViews.filter(view => view.outputFields.includes(sourceFieldId));
+        if (candidates.length > 1) error('AMBIGUOUS_SCOPE', 'contract', `字段 ${field.label} 出现在多个数据视图，请改为绑定明确的数据视图`, { projectId, fieldId: sourceFieldId });
+        if (candidates.length === 1) referenced.add(candidates[0].viewId);
+      }
+    }
+    const viewRefs: Array<{ viewId: string; version: string }> = [];
+    const resolvedViews = new Map<string, DataViewDefinition>();
+    const pending = [...referenced];
+    while (pending.length) {
+      const viewId = pending.shift()!;
+      if (resolvedViews.has(viewId)) continue;
+      const explicit = template.viewRefs.find(ref => ref.viewId === viewId);
+      const published = explicit
+        ? await this.views.getPublished(projectId, viewId, explicit.version)
+        : await this.views.latest(projectId, viewId);
+      if (!published) error('RULE_VERSION_NOT_FOUND', 'view', `视图尚未发布：${viewId}${explicit ? `@${explicit.version}` : ''}`, { projectId, viewId });
+      viewRefs.push({ viewId, version: published.version }); resolvedViews.set(viewId, published.value);
+      for (const child of published.value.children ?? []) pending.push(child.viewId);
+    }
+    const functionRefs = new Map<string, { functionId: string; version: string }>();
+    for (const definition of resolvedViews.values()) for (const step of definition.steps) if (step.op === 'applyFunction') {
+      const registered = this.project(projectId).functions.resolve(step.functionId, step.version);
+      functionRefs.set(`${step.functionId}@${step.version}`, { functionId: step.functionId, version: step.version });
+      if (!registered.definition.deterministic) error('RULE_VERSION_NOT_FOUND', 'rule', `函数必须是确定性版本：${step.functionId}@${step.version}`);
+    }
+    template.viewRefs = viewRefs;
+    template.functionRefs = [...functionRefs.values()].sort((a, b) => a.functionId.localeCompare(b.functionId));
+    validateContract<TemplatePackage>('templatePackage', template);
+    validateTemplatePackage(template);
+    return { template, viewRefs, functionRefs: template.functionRefs };
+  }
+
   async designerMetadata(projectId: string) {
     const context = this.project(projectId);
     return { project: context.project, catalog: { contractVersion: 2, ...context.catalog },
@@ -137,7 +187,8 @@ export class ReportingService {
   }
 
   async previewViews(projectId: string, request: { documentType: string; businessKey: Record<string, string>; viewIds?: string[];
-    definitions?: DataViewDefinition[]; limit?: number; offset?: number; template?: TemplatePackage; pageDefinitionId?: string }) {
+    definitions?: DataViewDefinition[]; limit?: number; offset?: number; template?: TemplatePackage; templateRef?: { id: string; version: number }; pageDefinitionId?: string;
+    versionMode?: 'draft' | 'pinned' }) {
     const context = this.project(projectId);
     if (!request || !context.project.documentTypes.includes(request.documentType) || !request.businessKey || typeof request.businessKey !== 'object'
       || Array.isArray(request.businessKey) || Object.values(request.businessKey).some(value => typeof value !== 'string')
@@ -148,31 +199,56 @@ export class ReportingService {
     const limit = request.limit ?? 100, offset = request.offset ?? 0;
     if (!Number.isInteger(limit) || limit < 1 || limit > 200 || !Number.isInteger(offset) || offset < 0)
       error('CONTRACT_INVALID', 'contract', '试算每页 1—200 条，起始位置必须是非负整数', { projectId });
+    const versionMode = request.versionMode ?? 'draft';
+    if (versionMode !== 'draft' && versionMode !== 'pinned') error('CONTRACT_INVALID', 'contract', '试算版本模式必须是 draft 或 pinned', { projectId });
+    if (versionMode === 'pinned' && (!request.templateRef || request.definitions?.length))
+      error('CONTRACT_INVALID', 'contract', '固定版本试算需要已发布模板包，不能同时提交未保存视图', { projectId });
+    let template = request.template;
+    if (request.templateRef) {
+      if (!Number.isInteger(request.templateRef.version) || !request.templateRef.id)
+        error('CONTRACT_INVALID', 'contract', '模板版本引用无效', { projectId });
+      const publishedTemplate = await this.templates.getVersion(projectId, request.templateRef.id, request.templateRef.version);
+      if (!publishedTemplate || publishedTemplate.value.status !== 'published')
+        error('RULE_VERSION_NOT_FOUND', 'contract', `已发布模板版本不存在：${request.templateRef.id}@${request.templateRef.version}`, { projectId, templateId: request.templateRef.id });
+      template = publishedTemplate.value;
+    }
+    if (template) {
+      if (template.projectId !== projectId) error('CONTRACT_INVALID', 'contract', '试算模板不属于当前项目', { projectId });
+      validateContract<TemplatePackage>('templatePackage', template);
+      validateTemplatePackage(template);
+      this.checkTemplateQuotas(template);
+    }
     const available = new Map((await this.listViews(projectId)).map(view => [view.viewId, view]));
+    const pinnedViews = new Map<string, DataViewDefinition>();
+    if (versionMode === 'pinned') {
+      for (const ref of template!.viewRefs) {
+        const published = await this.views.getPublished(projectId, ref.viewId, ref.version);
+        if (!published) error('RULE_VERSION_NOT_FOUND', 'view', `固定视图版本不存在：${ref.viewId}@${ref.version}`, { projectId, viewId: ref.viewId });
+        pinnedViews.set(ref.viewId, published.value);
+      }
+      available.clear();
+      for (const [id, definition] of pinnedViews) available.set(id, definition);
+    }
     if (request.definitions !== undefined) {
       if (!Array.isArray(request.definitions) || request.definitions.length > 100) error('CONTRACT_INVALID', 'contract', '试算草稿最多 100 个视图', { projectId });
       const seen = new Set<string>();
       for (const definition of request.definitions) {
         validateContract<DataViewDefinition>('dataView', definition);
         if (seen.has(definition.viewId)) error('DUPLICATE_KEY', 'view', `重复试算草稿 ${definition.viewId}`, { viewId: definition.viewId });
-        seen.add(definition.viewId); available.set(definition.viewId, definition);
+        seen.add(definition.viewId);
+        if (versionMode === 'draft') available.set(definition.viewId, definition);
       }
     }
     const definitions = [...available.values()];
     const roots = request.viewIds?.length ? request.viewIds : [...available.keys()];
     // Construct before collection so invalid contracts/functions fail without contacting MES.
     const engine = new DataViewEngine({ project: context.project, catalog: context.catalog.fields as any[], views: definitions, functions: context.functions });
-    if (request.template) {
-      if (request.template.projectId !== projectId) error('CONTRACT_INVALID', 'contract', '试算模板不属于当前项目', { projectId });
-      validateTemplatePackage(request.template);
-      this.checkTemplateQuotas(request.template);
-    }
     const data = await context.adapter.collect({ documentType: request.documentType, businessKey: request.businessKey });
     const results = engine.executeAll(data, roots);
-    const pageDefinitionId = request.pageDefinitionId ?? request.template?.pageDefinitions?.find(page => page.pageType === 'main')?.pageDefinitionId;
-    const pagePlan = request.template && pageDefinitionId ? planPages(request.template, pageDefinitionId, results) : undefined;
+    const pageDefinitionId = request.pageDefinitionId ?? template?.pageDefinitions?.find(page => page.pageType === 'main')?.pageDefinitionId;
+    const pagePlan = template && pageDefinitionId ? planPages(template, pageDefinitionId, results) : undefined;
     if (pagePlan && pagePlan.totalPages > 500) error('RESOURCE_LIMIT_EXCEEDED', 'layout', '试算最多支持 500 页', { projectId });
-    return { catalogVersion: context.catalog.catalogVersion, mode: request.definitions ? 'draft' : 'published', offset, limit,
+    return { catalogVersion: context.catalog.catalogVersion, mode: versionMode, offset, limit,
       definitions: definitions.map(view => ({ viewId: view.viewId, version: view.version,
         source: request.definitions?.some(item => item.viewId === view.viewId) ? 'draft' : 'published' })),
       views: results.map(view => {
@@ -212,64 +288,38 @@ export class ReportingService {
     return this.views.saveDraft(projectId, definition, expectedRevision);
   }
 
-  async publishView(projectId: string, viewId: string, version?: string) {
+  async publishView(projectId: string, viewId: string, version?: string, expectedDraftRevision?: number) {
     const context = this.project(projectId);
     const draft = await this.views.getDraft(projectId, viewId);
     if (!draft) error('DATA_NOT_FOUND', 'view', `视图草稿不存在：${viewId}`, { projectId, viewId });
+    const revision = expectedDraftRevision ?? draft.revision;
+    if (draft.revision !== revision) error('REVISION_CONFLICT', 'view', `视图草稿已变化：预期修订 ${revision}，当前 ${draft.revision}`, { projectId, viewId });
     const definition = structuredClone(draft.value);
     if (version) definition.version = version;
     validateContract<DataViewDefinition>('dataView', definition);
     new DataViewEngine({ project: context.project, catalog: context.catalog.fields as any[],
       views: (await this.listViews(projectId)).filter(view => view.viewId !== viewId).concat(definition), functions: context.functions });
-    return this.views.publish(projectId, definition);
+    return this.views.publish(projectId, definition, revision);
   }
 
-  async publishTemplate(projectId: string, templateId: string) {
+  async publishTemplate(projectId: string, templateId: string, expectedDraftRevision?: number) {
     this.project(projectId);
     const draft = await this.templates.getDraft(projectId, templateId);
     if (!draft) error('DATA_NOT_FOUND', 'contract', `模板草稿不存在：${templateId}`, { projectId, templateId });
-    const template = structuredClone(draft.value);
-    this.checkTemplateQuotas(template);
-    const availableViews = await this.listViews(projectId);
-    const referenced = new Set(template.viewRefs.map(ref => ref.viewId));
-    for (const page of template.pageDefinitions ?? []) for (const region of page.regions)
-      if (region.viewId) referenced.add(region.viewId);
-    for (const worksheet of template.worksheets) for (const cell of Object.values(worksheet.document.cells)) if (cell.binding) {
-      const field = worksheet.document.fields?.find(item => item.fieldId === cell.binding!.fieldId || item.path === cell.binding!.path || item.fieldId === cell.binding!.path);
-      if (field?.sourceKind === 'view' && field.viewId) referenced.add(field.viewId);
-      if (field?.sourceKind === 'dataset') {
-        const sourceFieldId = field.sourceFieldId ?? field.fieldId;
-        const candidates = availableViews.filter(view => view.outputFields.includes(sourceFieldId));
-        if (candidates.length > 1) error('AMBIGUOUS_SCOPE', 'contract', `字段 ${field.label} 出现在多个数据视图，请改为绑定明确的数据视图`, { projectId, fieldId: sourceFieldId });
-        if (candidates.length === 1) referenced.add(candidates[0].viewId);
-      }
-    }
-    const viewRefs: Array<{ viewId: string; version: string }> = [];
-    const resolvedViews = new Map<string, DataViewDefinition>();
-    const pending = [...referenced];
-    while (pending.length) {
-      const viewId = pending.shift()!;
-      if (resolvedViews.has(viewId)) continue;
-      const explicit = template.viewRefs.find(ref => ref.viewId === viewId);
-      const published = explicit
-        ? await this.views.getPublished(projectId, viewId, explicit.version)
-        : await this.views.latest(projectId, viewId);
-      if (!published) error('RULE_VERSION_NOT_FOUND', 'contract', `视图尚未发布：${viewId}`, { projectId, viewId });
-      viewRefs.push({ viewId, version: published.version }); resolvedViews.set(viewId, published.value);
-      for (const child of published.value.children ?? []) pending.push(child.viewId);
-    }
-    const functionRefs = new Map<string, { functionId: string; version: string }>();
-    for (const definition of resolvedViews.values()) for (const step of definition.steps) if (step.op === 'applyFunction') {
-      const registered = this.project(projectId).functions.resolve(step.functionId, step.version);
-      functionRefs.set(`${step.functionId}@${step.version}`, { functionId: step.functionId, version: step.version });
-      if (!registered.definition.deterministic) error('RULE_VERSION_NOT_FOUND', 'rule', `函数必须是确定性版本：${step.functionId}@${step.version}`);
-    }
-    template.viewRefs = viewRefs;
-    template.functionRefs = [...functionRefs.values()].sort((a, b) => a.functionId.localeCompare(b.functionId));
-    validateContract<TemplatePackage>('templatePackage', template);
-    const { validateTemplatePackage } = await import('../../src/core/templates/package.ts');
-    validateTemplatePackage(template);
-    return this.templates.publish(projectId, templateId, template);
+    const revision = expectedDraftRevision ?? draft.revision;
+    if (draft.revision !== revision) error('REVISION_CONFLICT', 'contract', `模板草稿已变化：预期修订 ${revision}，当前 ${draft.revision}`, { projectId, templateId });
+    const { template } = await this.resolveTemplateDependencies(projectId, draft.value);
+    return this.templates.publish(projectId, templateId, template, revision);
+  }
+
+  async preflightTemplate(projectId: string, templateId: string, expectedDraftRevision?: number) {
+    this.project(projectId);
+    const draft = await this.templates.getDraft(projectId, templateId);
+    if (!draft) error('DATA_NOT_FOUND', 'contract', `模板草稿不存在：${templateId}`, { projectId, templateId });
+    if (expectedDraftRevision !== undefined && draft.revision !== expectedDraftRevision)
+      error('REVISION_CONFLICT', 'contract', `模板草稿已变化：预期修订 ${expectedDraftRevision}，当前 ${draft.revision}`, { projectId, templateId });
+    const resolved = await this.resolveTemplateDependencies(projectId, draft.value);
+    return { projectId, templateId, draftRevision: draft.revision, viewRefs: resolved.viewRefs, functionRefs: resolved.functionRefs };
   }
 
   async disableTemplate(projectId: string, templateId: string): Promise<void> {
@@ -278,20 +328,85 @@ export class ReportingService {
       error('DATA_NOT_FOUND', 'contract', `模板没有已发布版本：${templateId}`, { projectId, templateId });
     await this.templates.setDisabled(projectId, templateId, true);
   }
+  async enableTemplate(projectId: string, templateId: string): Promise<void> {
+    this.project(projectId);
+    if (!(await this.templates.listVersions(projectId, templateId)).length)
+      error('DATA_NOT_FOUND', 'contract', `模板没有已发布版本：${templateId}`, { projectId, templateId });
+    await this.templates.setDisabled(projectId, templateId, false);
+  }
 
   async setTemplateMatchRule(projectId: string, templateId: string, version: number,
     rule: { documentType: string; conditions: Record<string, string>; priority: number }) {
     const project = this.project(projectId);
-    if (!Number.isInteger(version) || !project.project.documentTypes.includes(rule.documentType))
+    if (!Number.isInteger(version) || !rule || !project.project.documentTypes.includes(rule.documentType)
+      || !rule.conditions || typeof rule.conditions !== 'object' || Array.isArray(rule.conditions)
+      || Object.values(rule.conditions).some(value => typeof value !== 'string' || value.length > 200))
       error('CONTRACT_INVALID', 'contract', '模板匹配规则必须引用有效发布版本和项目单据类型', { projectId, templateId });
     if (!Number.isInteger(rule.priority) || rule.priority < 0 || rule.priority > 1_000_000)
       error('CONTRACT_INVALID', 'contract', '模板匹配优先级必须是 0 至 1000000 的整数', { projectId, templateId });
     for (const [fieldId, value] of Object.entries(rule.conditions)) {
-      if (!Object.hasOwn(project.project.businessKey, fieldId) || typeof value !== 'string' || value.length > 200)
-        error('CONTRACT_INVALID', 'contract', `模板匹配条件不是已登记的业务参数：${fieldId}`, { projectId, templateId, fieldId });
+      if ((!Object.hasOwn(project.project.businessKey, fieldId) && !Object.hasOwn(project.project.templateMatchFields ?? {}, fieldId))
+        || typeof value !== 'string' || value.length > 200)
+        error('CONTRACT_INVALID', 'contract', `模板匹配条件不是已登记的业务参数或采集字段：${fieldId}`, { projectId, templateId, fieldId });
     }
     if (await this.templates.isDisabled(projectId, templateId)) error('DATA_NOT_FOUND', 'contract', '不能为已停用模板登记匹配规则', { projectId, templateId });
     return this.templates.setMatchRule(projectId, templateId, version, rule);
+  }
+
+  private resolveTemplateMatchFacts(project: ProjectDefinition, data: any, requiredFields: string[]) {
+    const values: Record<string, string> = {};
+    const facts: Record<string, { value: string; datasetId: string; fieldId: string; recordCount: number }> = {};
+    for (const matchFieldId of requiredFields) {
+      const definition = project.templateMatchFields![matchFieldId];
+      const dataset = data.datasets?.find((item: any) => item.datasetId === definition.datasetId);
+      const records = dataset?.records;
+      if (!Array.isArray(records) || records.length === 0)
+        error('DATA_NOT_FOUND', 'collect', `无法从 ${definition.label} 取得模板匹配值：数据集没有记录`,
+          { projectId: project.projectId, datasetId: definition.datasetId, fieldId: definition.fieldId });
+      const distinct = new Set<string>();
+      for (const record of records) {
+        const raw = record?.values?.[definition.fieldId];
+        if (raw === null || raw === undefined || (typeof raw === 'string' && !raw.trim()))
+          error('VALUE_TYPE_ERROR', 'collect', `模板匹配字段 ${definition.label} 存在空值，无法安全选择模板`,
+            { projectId: project.projectId, datasetId: definition.datasetId, fieldId: definition.fieldId, recordId: record?.recordId });
+        const value = String(raw).trim();
+        if (!value || value.length > 200)
+          error('VALUE_TYPE_ERROR', 'collect', `模板匹配字段 ${definition.label} 的值无效或超过 200 个字符`,
+            { projectId: project.projectId, datasetId: definition.datasetId, fieldId: definition.fieldId, recordId: record?.recordId });
+        distinct.add(value);
+      }
+      if (distinct.size !== 1)
+        error('AMBIGUOUS_SCOPE', 'collect', `模板匹配字段 ${definition.label} 在 ${records.length} 条记录中存在冲突值，不能自动选择模板`,
+          { projectId: project.projectId, datasetId: definition.datasetId, fieldId: definition.fieldId });
+      const value = [...distinct][0];
+      values[matchFieldId] = value;
+      facts[matchFieldId] = { value, datasetId: definition.datasetId, fieldId: definition.fieldId, recordCount: records.length };
+    }
+    return { values, facts };
+  }
+
+  private requiredMatchFields(project: ProjectDefinition,
+    inspection: { candidates: Array<{ disabled: boolean; conditions: Record<string, string> }> }, businessKey: Record<string, string>): string[] {
+    const configured = new Set(Object.keys(project.templateMatchFields ?? {}));
+    return [...new Set(inspection.candidates.filter(candidate => !candidate.disabled
+      && Object.entries(candidate.conditions).every(([key, value]) => configured.has(key) || businessKey[key] === value))
+      .flatMap(candidate => Object.keys(candidate.conditions).filter(key => configured.has(key))))];
+  }
+
+  async inspectTemplateMatches(projectId: string, documentType: string, businessKey: Record<string, string>) {
+    const context = this.project(projectId), project = context.project;
+    if (!project.documentTypes.includes(documentType) || !businessKey || typeof businessKey !== 'object' || Array.isArray(businessKey)
+      || Object.keys(businessKey).some(key => !Object.hasOwn(project.businessKey, key))
+      || Object.values(businessKey).some(value => typeof value !== 'string')
+      || Object.entries(project.businessKey).some(([key, field]) => field.required && !businessKey[key]?.trim()))
+      error('CONTRACT_INVALID', 'contract', '模板匹配试算的单据类型或业务参数无效', { projectId });
+    const initial = await this.templates.inspectMatches(projectId, documentType, businessKey);
+    const required = this.requiredMatchFields(project, initial, businessKey);
+    const pending = Object.keys(project.templateMatchFields ?? {});
+    if (!required.length) return evaluateTemplateMatches(initial.candidates, businessKey, pending);
+    const data = await context.adapter.collect({ documentType, businessKey });
+    const resolved = this.resolveTemplateMatchFacts(project, data, required);
+    return { ...evaluateTemplateMatches(initial.candidates, { ...businessKey, ...resolved.values }, pending.filter(key => !required.includes(key))), matchFacts: resolved.facts };
   }
 
   async generation(projectId: string, generationId: string): Promise<StoredGeneration | undefined> {
@@ -355,8 +470,25 @@ export class ReportingService {
 
   private async generateOnce(context: RuntimeProject, request: GenerationRequest, requestHash: string, signal?: AbortSignal): Promise<StoredGeneration> {
     const projectId = context.project.projectId;
-    const matched = request.autoMatch ? await this.templates.match(projectId, request.documentType, request.businessKey)
+    let collectedData: any;
+    let resolvedMatchFacts: NonNullable<GenerationSnapshot['templateMatch']>['facts'] = {};
+    let templateMatch: GenerationSnapshot['templateMatch'];
+    let matchInputs = request.businessKey;
+    let initialMatchInspection;
+    if (request.autoMatch) initialMatchInspection = await this.templates.inspectMatches(projectId, request.documentType, request.businessKey);
+    const required = initialMatchInspection ? this.requiredMatchFields(context.project, initialMatchInspection, request.businessKey) : [];
+    if (required.length) {
+      collectedData = await context.adapter.collect({ documentType: request.documentType, businessKey: request.businessKey, signal });
+      const resolved = this.resolveTemplateMatchFacts(context.project, collectedData, required);
+      resolvedMatchFacts = resolved.facts;
+      matchInputs = { ...request.businessKey, ...resolved.values };
+    }
+    const matched: { templateId: string; version: number; conditions?: Record<string, string>; priority?: number } = request.autoMatch
+      ? selectTemplateMatch(evaluateTemplateMatches(initialMatchInspection!.candidates, matchInputs,
+        Object.keys(context.project.templateMatchFields ?? {}).filter(key => !required.includes(key))), request.documentType)
       : { templateId: request.templateRef!.id, version: request.templateRef!.version! };
+    if (request.autoMatch) templateMatch = { documentType: request.documentType,
+      facts: resolvedMatchFacts, rule: { conditions: matched.conditions!, priority: matched.priority! } };
     const templateId = matched.templateId, version = matched.version;
     if (await this.templates.isDisabled(projectId, templateId)) error('DATA_NOT_FOUND', 'contract', `模板已停用：${templateId}`, { projectId, templateId });
     const published = await this.templates.getVersion(projectId, templateId, version);
@@ -370,7 +502,7 @@ export class ReportingService {
       if (!view) error('RULE_VERSION_NOT_FOUND', 'view', `固定视图版本不存在：${ref.viewId}@${ref.version}`, { projectId, viewId: ref.viewId });
       definitions.push(view.value);
     }
-    const data = await context.adapter.collect({ documentType: request.documentType, businessKey: request.businessKey, signal });
+    const data = collectedData ?? await context.adapter.collect({ documentType: request.documentType, businessKey: request.businessKey, signal });
     const engine = new DataViewEngine({ project: context.project, catalog: context.catalog.fields as any[], views: definitions, functions: context.functions });
     const viewResults = engine.executeAll(data, template.viewRefs.map(ref => ref.viewId));
     const pageDefinitionId = request.pageDefinitionId
@@ -388,6 +520,7 @@ export class ReportingService {
     const snapshot: GenerationSnapshot = {
       contractVersion: 2, generationId: `gen-${randomUUID()}`, projectId, businessKey: structuredClone(request.businessKey),
       templateRef: { packageId: template.packageId, revision: template.revision }, catalogVersion: context.catalog.catalogVersion,
+      ...(templateMatch ? { templateMatch } : {}),
       viewRefs: structuredClone(template.viewRefs), functionRefs: structuredClone(template.functionRefs),
       collectedAt: data.collectedAt, sourceVersion: data.sourceVersion, data, viewResults,
       pagePlan: structuredClone(pagePlan), output: { fileName: output.fileName, mediaType: output.mediaType, sha256: sha256(output.bytes), byteLength: output.bytes.byteLength },

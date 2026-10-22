@@ -43,6 +43,22 @@ export function generateDocument(template: TemplateDocument, data: unknown): Gen
   out.rows = Math.max(1, planned.length); out.rowHeightPx = planned.length ? planned.map(p => template.rowHeightPx[p.sourceRow]) : [32];
   const rowMap = Array.from({ length: template.rows }, (_, r) => planned.findIndex(p => p.sourceRow === r));
   const rowsChanged = planned.length !== template.rows || planned.some((p, r) => p.sourceRow !== r);
+  if (rowsChanged && template.images?.length) {
+    const mapped = (position: number, end = false) => {
+      if (position === template.rows) return out.rows;
+      // An integral bottom edge belongs to the preceding covered row, not the
+      // following row which may be an empty detail removed by the existing plan.
+      const row = end && Number.isInteger(position) ? position - 1 : Math.floor(position), target = rowMap[row];
+      assert(target !== undefined && target >= 0, '图片定位对应的行已被删除');
+      return target + position - row;
+    };
+    out.images = template.images.map(image => {
+      assert(!regions.some(region => image.rect.r < region.rect.r + region.rect.rows && region.rect.r < image.rect.r + image.rect.rows),
+        `图片 ${image.imageId} 跨越重复区域，暂不支持自动复制，请移至固定区域`);
+      const start = mapped(image.rect.r), end = mapped(image.rect.r + image.rect.rows, true);
+      return { ...copy(image), rect: { ...image.rect, r: start, rows: end - start } };
+    });
+  }
   const rowCells = new Map<number, [number, Cell][]>();
   for (const [key, cell] of Object.entries(template.cells)) {
     const [r, c] = key.split(':').map(Number); const list = rowCells.get(r) ?? []; list.push([c, cell]); rowCells.set(r, list);

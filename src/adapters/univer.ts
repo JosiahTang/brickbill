@@ -1,9 +1,9 @@
 import {
-  BorderStyleTypes, CellValueType, CommandType, HorizontalAlign, VerticalAlign, WrapStrategy,
+  BorderStyleTypes, CellValueType, CommandType, HorizontalAlign, LifecycleStages, VerticalAlign, WrapStrategy,
   type ICellData, type IObjectMatrixPrimitiveType, type IRange, type IStyleData,
 } from '@univerjs/core';
 import { createUniver, LocaleType, mergeLocales } from '@univerjs/presets';
-import { UniverSheetsCorePreset } from '@univerjs/preset-sheets-core';
+import { UniverSheetsCorePreset, ScrollCommand, ScrollToCellCommand, SetScrollRelativeCommand, ResetScrollCommand } from '@univerjs/preset-sheets-core';
 import zhCN from '@univerjs/preset-sheets-core/locales/zh-CN';
 import {
   AddWorksheetMergeMutation, RemoveWorksheetMergeMutation, SetRangeValuesMutation,
@@ -12,6 +12,9 @@ import {
 import '@univerjs/preset-sheets-core/lib/index.css';
 import { copy, displayText, numberFormat, type Cell, type Rect, type TemplateDocument } from '../domain/model.ts';
 import { renderCells, validateDocument } from '../domain/operations.ts';
+import { mountImageOverlay } from './imageOverlay.ts';
+import { axisPosition } from '../domain/images.ts';
+import type { TemplatePackage } from '../core/contracts/types.ts';
 
 export const univerRange = (r: Rect): IRange => ({
   startRow: r.r, startColumn: r.c, endRow: r.r + r.rows - 1, endColumn: r.c + r.cols - 1,
@@ -42,6 +45,7 @@ export interface GridHandlers {
   select(rect: Rect): void;
   dragOver(r: number, c: number, dataTransfer: DataTransfer): void;
   drop(r: number, c: number, dataTransfer: DataTransfer): void;
+  updateImage(imageId: string, rect: Rect): void;
 }
 export function mountUniver(container: HTMLElement, initial: TemplateDocument, handlers: GridHandlers, zoomRatio = 1) {
   const { univer, univerAPI: api } = createUniver({
@@ -60,11 +64,41 @@ export function mountUniver(container: HTMLElement, initial: TemplateDocument, h
   let previous: TemplateDocument | undefined;
   let previousCells: Record<string, Cell> = {};
   let highlight: { dispose(): void } | undefined;
+  let current = initial;
+  let skeleton: ReturnType<typeof sheet.getSkeleton>;
+  let scroll = { sheetViewStartColumn: 0, sheetViewStartRow: 0, offsetX: 0, offsetY: 0 };
+  const images = mountImageOverlay(container, () => {
+    const host = container.getBoundingClientRect();
+    // Univer also owns offscreen cache canvases at (-1000,-1000); use its visible viewport.
+    const bounds = [...container.querySelectorAll('canvas')].map(canvas => canvas.getBoundingClientRect())
+      .find(rect => rect.width > 0 && rect.height > 0 && rect.left >= host.left - 1 && rect.top >= host.top - 1
+        && rect.left < host.right && rect.top < host.bottom);
+    if (!skeleton || !scroll || !bounds) return undefined;
+    return { left: bounds.left - host.left + skeleton.rowHeaderWidthAndMarginLeft * zoomRatio,
+      top: bounds.top - host.top + skeleton.columnHeaderHeightAndMarginTop * zoomRatio,
+      scrollX: axisPosition(scroll.sheetViewStartColumn, current.colWidthPx) + scroll.offsetX,
+      scrollY: axisPosition(scroll.sheetViewStartRow, current.rowHeightPx) + scroll.offsetY, zoom: zoomRatio };
+  }, handlers.updateImage);
   const disposables = [
+    api.addEvent(api.Event.LifeCycleChanged, e => {
+      if (e.stage < LifecycleStages.Steady) return;
+      skeleton = sheet.getSkeleton(); scroll = sheet.getScrollState(); images.schedule();
+    }),
+    // The Scroll event is registered after Univer's render services become ready.
+    // RAF/ResizeObserver can run earlier during mount; they must only read cached state.
+    api.addEvent(api.Event.Scroll, e => {
+      if (e.worksheet.getSheetId() !== target.subUnitId) return;
+      scroll = sheet.getScrollState(); images.schedule();
+    }),
+    api.addEvent(api.Event.SheetSkeletonChanged, e => {
+      if (e.worksheet.getSheetId() !== target.subUnitId) return;
+      skeleton = e.skeleton; images.schedule();
+    }),
     // Controlled-design mode: select/scroll operations are allowed; all data changes
     // must use Pinia actions. It intentionally doesn't enable native arbitrary editing.
     api.addEvent(api.Event.BeforeCommandExecute, e => {
-      if (!applying && e.type !== CommandType.OPERATION) e.cancel = true;
+      const viewportCommand = [ScrollCommand.id, ScrollToCellCommand.id, SetScrollRelativeCommand.id, ResetScrollCommand.id].includes(e.id);
+      if (!applying && e.type !== CommandType.OPERATION && !viewportCommand) e.cancel = true;
     }),
     api.addEvent(api.Event.BeforeSheetEditStart, e => { e.cancel = true; }),
     api.addEvent(api.Event.BeforeClipboardPaste, e => { e.cancel = true; }),
@@ -115,7 +149,7 @@ export function mountUniver(container: HTMLElement, initial: TemplateDocument, h
       }
       if (!previous || JSON.stringify(previous.colWidthPx) !== JSON.stringify(doc.colWidthPx))
         run(SetWorksheetColWidthMutation.id, { ranges: [all], colWidth: Object.fromEntries(doc.colWidthPx.map((w, c) => [c, w])) });
-      previous = copy(doc); previousCells = nextCells;
+      previous = copy(doc); previousCells = nextCells; current = doc; images.schedule();
     } finally { applying = false; }
   }
   function preview(rect?: Rect, valid = true) {
@@ -128,11 +162,12 @@ export function mountUniver(container: HTMLElement, initial: TemplateDocument, h
   render(initial);
   return {
     render, preview,
+    renderImages(doc: TemplateDocument, resources: NonNullable<TemplatePackage['resources']>) { images.render(doc, resources); },
     select(rect: Rect) {
       applying = true;
       try { sheet.getRange(rect.r, rect.c, rect.rows, rect.cols).activate(); sheet.scrollToCell(rect.r, rect.c); }
       finally { applying = false; }
     },
-    dispose() { highlight?.dispose(); disposables.forEach(d => d.dispose()); univer.dispose(); },
+    dispose() { images.dispose(); highlight?.dispose(); disposables.forEach(d => d.dispose()); univer.dispose(); },
   };
 }

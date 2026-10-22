@@ -3,6 +3,7 @@ import { copy, documentFields, newDocument, type CellStyle, type TemplateDocumen
 import { validateDocument } from '../domain/operations.ts';
 import { createTemplatePackage, validateTemplatePackage } from '../core/templates/package.ts';
 import type { TemplatePackage } from '../core/contracts/types.ts';
+import { readWorkbookImages } from './workbookImages.ts';
 
 export const METADATA_SHEET = '_brickbill_template';
 export const METADATA_MARKER = 'BRICKBILL_TEMPLATE_V1';
@@ -96,7 +97,7 @@ export async function importExcel(bytes: Uint8Array, fileName: string, sheetName
     };
   }));
   const warnings = ['导入及导出支持常规单元格、合并、样式、图片和打印设置；图表、宏、透视表及特殊 Excel 对象不保证保留。'];
-  if (sheet.getImages().length) warnings.push(`本表含 ${sheet.getImages().length} 张图片：保存时保留，编辑网格暂不显示图片。`);
+  if (sheet.getImages().length) warnings.push(`本表含 ${sheet.getImages().length} 张图片：可在设计画布中选择、移动和缩放，保存后保留。`);
   if (workbook.worksheets.filter(s => s.name !== METADATA_SHEET).length > 1) warnings.push('本次编辑选定工作表，其他工作表随文件保留。');
   if (Object.values(doc.cells).some(c => c.excelValue && typeof c.excelValue === 'object' && 'formula' in c.excelValue)) warnings.push('公式在模板保存时保留；涉及扩行的生成需先将公式替换为业务字段。');
   doc.excelSource = { fileName, sheetName: sheet.name, base64: bytesToBase64(bytes), warnings };
@@ -125,7 +126,8 @@ export async function importTemplatePackage(bytes: Uint8Array, fileName: string,
       if (!exists) throw new Error(`模板包引用的工作表已不存在：${sheet.name}`);
     }
     validateTemplatePackage(template);
-    return template;
+    const normalized = readWorkbookImages(template, workbook);
+    validateTemplatePackage(normalized); return normalized;
   }
 
   let documents: TemplateDocument[];
@@ -143,6 +145,14 @@ export async function importTemplatePackage(bytes: Uint8Array, fileName: string,
   }
   const template = createTemplatePackage({ projectId, name: fileName.replace(/\.xlsx$/i, ''),
     worksheets: documents.map(document => ({ document })), sourceWorkbook: { fileName, base64: bytesToBase64(bytes) } });
-  validateTemplatePackage(template);
-  return template;
+  const normalized = readWorkbookImages(template, workbook);
+  validateTemplatePackage(normalized);
+  return normalized;
+}
+
+/** Legacy package JSON/drafts acquire editable native anchors when opened; published storage is never mutated. */
+export async function hydrateTemplateImages(template: TemplatePackage): Promise<TemplatePackage> {
+  if (!template.sourceWorkbook?.base64 || template.worksheets.every(sheet => sheet.document.images !== undefined)) return copy(template);
+  const normalized = readWorkbookImages(template, await loadExcel(base64ToBytes(template.sourceWorkbook.base64)));
+  validateTemplatePackage(normalized); return normalized;
 }

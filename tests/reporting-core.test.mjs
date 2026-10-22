@@ -35,6 +35,20 @@ test('versioned project contracts reject unsupported versions and unresolved rel
   assert.throws(() => validateProjectSemantics(invalidProject), error => error.code === 'CONTRACT_INVALID');
 });
 
+test('T31 project template match fields are validated and remain optional for existing registrations', () => {
+  const configured = createDalipuDemoProject();
+  assert.deepEqual(configured.templateMatchFields.customer, {
+    label: '收货客户', datasetId: 'certificate.header', fieldId: 'cert.customer',
+  });
+  const legacy = structuredClone(configured); delete legacy.templateMatchFields;
+  assert.doesNotThrow(() => validateProjectSemantics(legacy));
+  const unknownSource = structuredClone(configured); unknownSource.templateMatchFields.customer.fieldId = 'contract.missing';
+  assert.throws(() => validateProjectSemantics(unknownSource), error => error.code === 'CONTRACT_INVALID');
+  const duplicateKey = structuredClone(configured);
+  duplicateKey.templateMatchFields.printNo = { label: '冲突字段', datasetId: 'certificate.header', fieldId: 'cert.customer' };
+  assert.throws(() => validateProjectSemantics(duplicateKey), error => error.code === 'CONTRACT_INVALID');
+});
+
 test('Dalipu and generic MES map to equivalent multipurpose views without flattening detail sets', async () => {
   const demos = createReportingDemoContext();
   const allBundles = [];

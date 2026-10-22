@@ -1,11 +1,15 @@
 import type ExcelJS from 'exceljs';
 import type { GenerationSnapshot, Scalar } from '../contracts/types.ts';
 import type { GenerationOutputExpectation, ProjectComparisonIssue } from './comparison.ts';
+import { imageRangeRect } from '../../domain/images.ts';
+import { imageResourceBytes } from '../../export/workbookImages.ts';
+import { sha256 } from './digest.ts';
 
 export interface GenerationOutputComparison {
   passed: boolean;
   issueCount: number;
   issues: ProjectComparisonIssue[];
+  imageContentChecks: { requested: number; checked: number; passed: number };
 }
 
 type WorkbookCellType = NonNullable<import('./comparison.ts').XlsxCellExpectation['type']>;
@@ -35,13 +39,22 @@ function sortedKey(key: Record<string, Scalar>, keyFields: string[]): Record<str
   return Object.fromEntries(keyFields.map(field => [field, key[field]]));
 }
 
-function imageAnchor(image: { range: { tl: { col: number; row: number }; br: { col: number; row: number } } }): {
+function imageAnchor(image: ReturnType<ExcelJS.Worksheet['getImages']>[number], sheet: ExcelJS.Worksheet): {
   tl: { col: number; row: number }; br: { col: number; row: number };
 } {
   const round = (value: number) => Math.round(value * 1000) / 1000;
+  const range = image?.range;
+  if (!range?.tl || ![range.tl.col, range.tl.row].every(value => Number.isFinite(value) && value >= 0)
+    || range.tl.col >= 16384 || range.tl.row >= 1048576) throw new Error('图片起点锚点无效');
+  const defaults = { row: (sheet.properties.defaultRowHeight ?? 18) * 96 / 72, col: (sheet.properties.defaultColWidth ?? 10) * 7 + 5 };
+  const dimensions = {
+    rowHeightPx: Array.from({ length: Math.max(sheet.rowCount, Math.ceil(range.tl.row) + 1) }, (_, i) => (sheet.getRow(i + 1).height ?? sheet.properties.defaultRowHeight ?? 18) * 96 / 72),
+    colWidthPx: Array.from({ length: Math.max(sheet.columnCount, Math.ceil(range.tl.col) + 1) }, (_, i) => (sheet.getColumn(i + 1).width ?? sheet.properties.defaultColWidth ?? 10) * 7 + 5),
+  };
+  const rect = imageRangeRect(range, dimensions, defaults);
   return {
-    tl: { col: round(image.range.tl.col), row: round(image.range.tl.row) },
-    br: { col: round(image.range.br.col), row: round(image.range.br.row) },
+    tl: { col: round(rect.c), row: round(rect.r) },
+    br: { col: round(rect.c + rect.cols), row: round(rect.r + rect.rows) },
   };
 }
 
@@ -55,8 +68,10 @@ export function compareGenerationOutput(
   bytes: Uint8Array,
   workbook: ExcelJS.Workbook,
   outputSha256: string,
+  trace?: { signoff?: { actorId: string; signedAt: string }; suiteVersion?: 1 | 2 },
 ): GenerationOutputComparison {
   const issues: ProjectComparisonIssue[] = [];
+  const imageContentChecks = { requested: (expected.xlsx?.images ?? []).reduce((sum, image) => sum + (image.contentSha256?.length ?? 0), 0), checked: 0, passed: 0 };
   const add = (scope: ProjectComparisonIssue['scope'], targetId: string, code: string, message: string,
     details: Partial<Pick<ProjectComparisonIssue, 'expected' | 'actual' | 'pageNumber' | 'regionId' | 'viewId' | 'sheet' | 'address'>> = {}) => {
     issues.push({ caseId, scope, targetId, code, message, generationId: expected.generationId, ...details });
@@ -74,6 +89,48 @@ export function compareGenerationOutput(
       expected: `${expected.templateRef.packageId}@${expected.templateRef.revision}`,
       actual: `${snapshot.templateRef.packageId}@${snapshot.templateRef.revision}`,
     });
+  if (expected.templateMatch) {
+    const actual = snapshot.templateMatch;
+    if (!actual) add('generation', 'templateMatch', 'TEMPLATE_MATCH_MISSING', '生成快照没有模板匹配依据');
+    else {
+      const wanted = expected.templateMatch;
+      if (wanted.documentType !== undefined && wanted.documentType !== actual.documentType)
+        add('generation', 'templateMatch.documentType', 'MATCH_DOCUMENT_TYPE_MISMATCH', '匹配依据单据类型与业务基准不一致', {
+          expected: wanted.documentType, actual: actual.documentType,
+        });
+      if (wanted.rule?.priority !== undefined && wanted.rule.priority !== actual.rule.priority)
+        add('generation', 'templateMatch.rule.priority', 'MATCH_PRIORITY_MISMATCH', '模板匹配优先级与业务基准不一致', {
+          expected: wanted.rule.priority, actual: actual.rule.priority,
+        });
+      if (wanted.rule?.conditions !== undefined && stableJson(wanted.rule.conditions) !== stableJson(actual.rule.conditions))
+        add('generation', 'templateMatch.rule.conditions', 'MATCH_CONDITIONS_MISMATCH', '模板匹配条件与快照依据不一致', {
+          expected: stableJson(wanted.rule.conditions), actual: stableJson(actual.rule.conditions),
+        });
+      for (const [factId, expectedFact] of Object.entries(wanted.facts ?? {})) {
+        const actualFact = actual.facts[factId];
+        if (!actualFact) {
+          add('generation', 'templateMatch.facts.' + factId, 'MATCH_FACT_MISSING', '匹配依据缺少业务事实 ' + factId);
+          continue;
+        }
+        for (const field of ['value', 'datasetId', 'fieldId', 'recordCount'] as const) {
+          const expectedValue = expectedFact[field];
+          if (expectedValue !== undefined && expectedValue !== actualFact[field])
+            add('generation', 'templateMatch.facts.' + factId + '.' + field, 'MATCH_FACT_MISMATCH',
+              '模板匹配事实 ' + factId + ' 的 ' + field + ' 与业务基准不一致', {
+                expected: String(expectedValue), actual: String(actualFact[field]),
+              });
+        }
+      }
+    }
+  }
+  if (expected.signoff) {
+    if (!trace?.signoff) add('generation', 'signoff', 'SIGNOFF_MISSING', '生成记录没有签发身份');
+    else if (trace.signoff.actorId !== expected.signoff.actorId)
+      add('generation', 'signoff.actorId', 'SIGNOFF_ACTOR_MISMATCH', '签发身份与业务基准不一致', {
+        expected: expected.signoff.actorId, actual: trace.signoff.actorId,
+      });
+  }
+
   if (!snapshot.output) add('generation', 'output', 'OUTPUT_METADATA_MISSING', '生成快照没有 XLSX 完整性元数据');
   else {
     if (snapshot.output.byteLength !== bytes.byteLength)
@@ -247,16 +304,42 @@ export function compareGenerationOutput(
           sheet: imageExpected.sheet, expected: imageExpected.count, actual: images.length,
         });
       if (imageExpected.anchors) {
-        const actualAnchors = images.map(imageAnchor);
+        const actualAnchors = images.map((image, index) => {
+          try { return imageAnchor(image, sheet); }
+          catch (error) {
+            add('xlsx', `images:${imageExpected.sheet}:${index}`, 'IMAGE_ANCHOR_INVALID', `图片锚点无效：${error instanceof Error ? error.message : String(error)}`, { sheet: imageExpected.sheet });
+            return undefined;
+          }
+        });
         const expectedAnchors = imageExpected.anchors.map(anchor => ({
           tl: { col: Math.round(anchor.tl.col * 1000) / 1000, row: Math.round(anchor.tl.row * 1000) / 1000 },
           ...(anchor.br ? { br: { col: Math.round(anchor.br.col * 1000) / 1000, row: Math.round(anchor.br.row * 1000) / 1000 } } : {}),
         }));
-        const projectedActual = actualAnchors.map((anchor, index) => imageExpected.anchors?.[index]?.br ? anchor : { tl: anchor.tl });
+        const projectedActual = actualAnchors.map((anchor, index) => !anchor || imageExpected.anchors?.[index]?.br ? anchor : { tl: anchor.tl });
         if (stableJson(projectedActual) !== stableJson(expectedAnchors))
           add('xlsx', `images:${imageExpected.sheet}`, 'IMAGE_ANCHOR_MISMATCH', '工作表图片锚点与业务基准不一致', {
             sheet: imageExpected.sheet, expected: stableJson(expectedAnchors), actual: stableJson(projectedActual),
           });
+      }
+      if (imageExpected.contentSha256 !== undefined) {
+        if (trace?.suiteVersion !== 2) {
+          add('xlsx', `images:${imageExpected.sheet}`, 'IMAGE_CONTENT_VERSION_REQUIRED', '图片内容断言需要明确的对照套件 v2', { sheet: imageExpected.sheet });
+          continue;
+        }
+        imageExpected.contentSha256.forEach((wanted, index) => {
+          try {
+            const image = images[index], resource = image && workbook.getImage(Number(image.imageId));
+            if (!resource) throw new Error('图片资源不存在');
+            const actual = sha256(imageResourceBytes(resource));
+            imageContentChecks.checked++;
+            if (actual !== wanted) add('xlsx', `images:${imageExpected.sheet}:${index}`, 'IMAGE_CONTENT_MISMATCH', '图片内容与独立基准不一致', {
+              sheet: imageExpected.sheet, expected: wanted, actual,
+            });
+            else imageContentChecks.passed++;
+          } catch (error) {
+            add('xlsx', `images:${imageExpected.sheet}:${index}`, 'IMAGE_CONTENT_INVALID', `图片资源无效：${error instanceof Error ? error.message : String(error)}`, { sheet: imageExpected.sheet });
+          }
+        });
       }
     }
     for (const setupExpected of xlsx.pageSetup ?? []) {
@@ -279,5 +362,5 @@ export function compareGenerationOutput(
     }
   }
 
-  return { passed: issues.length === 0, issueCount: issues.length, issues };
+  return { passed: issues.length === 0, issueCount: issues.length, issues, imageContentChecks };
 }

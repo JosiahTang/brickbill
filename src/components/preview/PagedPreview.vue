@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
 import { displayText } from '../../domain/model.ts';
+import { imagePixels } from '../../domain/images.ts';
 import type { ProjectedSheetPage } from '../../core/render/page.ts';
 import type { ReportingErrorShape, TemplatePackage } from '../../core/contracts/types.ts';
 
@@ -95,11 +96,7 @@ const images = computed(() => {
   const current = sheet.value; if (!current) return [];
   return current.imagePlacements.flatMap(placement => {
     const resource = resourceMap.value.get(placement.resourceId); if (!resource) return [];
-    const { r, c, rows, cols } = placement.rect, size = dimensions.value;
-    const x = size.cols.slice(0, c).reduce((sum, value) => sum + value, 0);
-    const y = size.rows.slice(0, r).reduce((sum, value) => sum + value, 0);
-    const width = size.cols.slice(c, c + cols).reduce((sum, value) => sum + value, 0);
-    const height = size.rows.slice(r, r + rows).reduce((sum, value) => sum + value, 0);
+    const { x, y, width, height } = imagePixels(placement.rect, current.document);
     return [{ id: placement.imageId, src: `data:${resource.mediaType};base64,${resource.base64}`, x, y, width, height }];
   });
 });

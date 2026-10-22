@@ -69,6 +69,13 @@ export interface BusinessKeyParameter {
   required: boolean;
 }
 
+/** A trusted value resolved from the MES bundle for template selection. */
+export interface TemplateMatchFieldDefinition {
+  label: string;
+  datasetId: string;
+  fieldId: string;
+}
+
 export interface ProjectDefinition {
   contractVersion: typeof REPORTING_CONTRACT_VERSION;
   projectId: string;
@@ -78,6 +85,8 @@ export interface ProjectDefinition {
   adapterVersion: string;
   documentTypes: string[];
   businessKey: Record<string, BusinessKeyParameter>;
+  /** Optional values resolved from the collected MES data before auto matching. */
+  templateMatchFields?: Record<string, TemplateMatchFieldDefinition>;
   datasets: DatasetDefinition[];
   relationships: DatasetRelationship[];
 }
@@ -357,6 +366,11 @@ export interface GenerationSnapshot {
   projectId: string;
   businessKey: Record<string, Scalar>;
   templateRef: { packageId: string; revision: number };
+  templateMatch?: {
+    documentType: string;
+    facts: Record<string, { value: string; datasetId: string; fieldId: string; recordCount: number }>;
+    rule: { conditions: Record<string, string>; priority: number };
+  };
   catalogVersion: string;
   viewRefs: Array<{ viewId: string; version: string }>;
   functionRefs: Array<{ functionId: string; version: string }>;

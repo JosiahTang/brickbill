@@ -41,6 +41,9 @@ export interface TemplateDocument {
   rowHeightPx: number[]; colWidthPx: number[];
   cells: Record<string, Cell>; merges: Rect[]; blocks: BlockInstance[];
   fields?: Field[]; repeatRegions?: RepeatRegion[]; excelSource?: ExcelSource;
+  /** Optional image layout v1. Absent in legacy documents; anchors are fractional cell coordinates. */
+  imageLayoutVersion?: 1;
+  images?: Array<{ imageId: string; resourceId: string; sourceIndex: number; rect: Rect }>;
 }
 export interface Field {
   path: string; label: string; format: Format; collection?: string;

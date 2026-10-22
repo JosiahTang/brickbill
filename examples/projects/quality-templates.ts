@@ -76,16 +76,20 @@ function workbook(spec: ExampleTemplateSpec): Promise<Uint8Array> {
   main.getCell('A4').value = '质保书编号'; main.getCell('E4').value = '客户';
   main.getCell('I4').value = '合同号'; main.getCell('M4').value = '第';
   main.getCell('A5').value = '产品名称'; main.getCell('I5').value = '执行标准';
+  // Header values occupy the free columns up to the next label, rather than wrapping in one narrow cell.
+  for (const range of ['C4:D4', 'G4:H4', 'K4:L4', 'C5:H5', 'K5:P5']) main.mergeCells(range);
   const order: Array<[Section, number]> = spec.variant === 'certificate'
     ? [['material', 8], ['chemistry', 15], ['tensile', 24], ['inspection', 33]]
     : [['material', 8], ['inspection', 17], ['chemistry', 25], ['tensile', 35]];
   for (const [key, row] of order) {
+    main.mergeCells(row, 1, row, 16);
     main.getCell(row, 1).value = sections[key].label;
     sections[key].columns.forEach(([, label], i) => { main.getCell(row + 1, i + 1).value = label; });
   }
-  main.getCell('A43').value = '本证书依照合同及执行标准签发。';
+  main.mergeCells('A43:P43'); main.getCell('A43').value = '本证书依照合同及执行标准签发。';
   appendix.mergeCells('A1:P2'); appendix.getCell('A1').value = '硬度检验附页';
   appendix.getCell('A4').value = '质保书编号'; appendix.getCell('M4').value = '第';
+  appendix.mergeCells('C4:L4');
   ['炉号', '试批号', '试样', '类型', '外侧 1', '外侧 2', '外侧均值', '中部均值', '内侧均值']
     .forEach((label, i) => { appendix.getCell(7, i + 1).value = label; });
   return book.xlsx.writeBuffer().then(bytes => new Uint8Array(bytes));

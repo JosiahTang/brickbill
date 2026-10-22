@@ -1,5 +1,5 @@
 import { copy, type TemplateDocument } from '../../domain/model.ts';
-import { validateDocument } from '../../domain/operations.ts';
+import { a1, validateDocument } from '../../domain/operations.ts';
 import { ReportingError } from '../contracts/errors.ts';
 import type { PageDefinition, TemplatePackage, TemplateWorksheet } from '../contracts/types.ts';
 import { validateContract } from '../contracts/validate.ts';
@@ -56,6 +56,8 @@ export function validateTemplatePackage(value: unknown): asserts value is Templa
   const worksheetIds = new Set<string>(), names = new Set<string>();
   for (const sheet of template.worksheets) {
     validateDocument(sheet.document);
+    for (const image of sheet.document.images ?? []) if (!resourceIds.has(image.resourceId))
+      throw new ReportingError({ code: 'FIELD_NOT_FOUND', stage: 'contract', message: `图片 ${image.imageId} 引用的资源不存在：${image.resourceId}`, context: { worksheetId: sheet.worksheetId } });
     const canonicalName = safeName(sheet.name).toLocaleLowerCase();
     if (worksheetIds.has(sheet.worksheetId) || names.has(canonicalName))
       throw new ReportingError({ code: 'DUPLICATE_KEY', stage: 'contract', message: '工作表标识和名称必须唯一',
@@ -157,6 +159,9 @@ export function validateTemplatePackage(value: unknown): asserts value is Templa
       imageIds.add(image.imageId);
       const sheet = template.worksheets.find(item => item.worksheetId === image.worksheetId);
       if (!sheet || !page.worksheetIds.includes(image.worksheetId)) throw new ReportingError({ code: 'CONTRACT_INVALID', stage: 'layout', message: `图片 ${image.imageId} 引用了不属于页面的工作表` });
+      if (sheet.document.images?.some(native => native.imageId === image.imageId))
+        throw new ReportingError({ code: 'DUPLICATE_KEY', stage: 'layout', message: `页面 ${page.pageDefinitionId} 的配置图片与原始图片标识冲突：${image.imageId}`,
+          context: { worksheetId: image.worksheetId, cell: a1(Math.floor(image.rect.r), Math.floor(image.rect.c)) } });
       const { r, c, rows, cols } = image.rect;
       if (![r, c, rows, cols].every(Number.isInteger) || r < 0 || c < 0 || rows < 1 || cols < 1
         || r + rows > sheet.document.rows || c + cols > sheet.document.cols)

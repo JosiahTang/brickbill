@@ -11,6 +11,7 @@ export interface ServerSettings {
   includeDemoProjects: boolean;
   projectsFile?: string;
   tokensJson?: string;
+  tokenActorsJson?: string;
 }
 
 export function parseTokenAuthorizations(value: string | undefined): Record<string, string[]> | undefined {
@@ -23,6 +24,21 @@ export function parseTokenAuthorizations(value: string | undefined): Record<stri
       || !projects.length || projects.some(id => typeof id !== 'string' || !id.trim())))
     throw new Error('REPORTING_TOKENS_JSON 必须是令牌到非空项目 ID 列表的映射');
   return parsed as Record<string, string[]>;
+}
+
+export function parseTokenActorIds(value: string | undefined, tokensJson?: string): Record<string, string> | undefined {
+  if (!value) return undefined;
+  let parsed: unknown;
+  try { parsed = JSON.parse(value); }
+  catch { throw new Error('REPORTING_TOKEN_ACTORS_JSON 必须是有效 JSON'); }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed) || !Object.keys(parsed).length
+    || Object.entries(parsed).some(([token, actorId]) => !token.trim() || typeof actorId !== 'string'
+      || !actorId.trim() || actorId.length > 200))
+    throw new Error('REPORTING_TOKEN_ACTORS_JSON 必须是令牌到稳定员工 actorId 的映射');
+  const tokenAuthorizations = parseTokenAuthorizations(tokensJson);
+  if (!tokenAuthorizations || Object.keys(parsed).some(token => !Object.hasOwn(tokenAuthorizations, token)))
+    throw new Error('REPORTING_TOKEN_ACTORS_JSON 中的令牌必须同时配置在 REPORTING_TOKENS_JSON');
+  return parsed as Record<string, string>;
 }
 
 export function readServerSettings(env: NodeJS.ProcessEnv = process.env): ServerSettings {
@@ -45,6 +61,8 @@ export function readServerSettings(env: NodeJS.ProcessEnv = process.env): Server
   if (!includeDemoProjects && !projectsFile) throw new Error('没有可用项目：配置 REPORTING_PROJECTS_FILE 或明确启用模拟项目');
   const tokensJson = env.REPORTING_TOKENS_JSON || undefined;
   parseTokenAuthorizations(tokensJson);
+  const tokenActorsJson = env.REPORTING_TOKEN_ACTORS_JSON || undefined;
+  parseTokenActorIds(tokenActorsJson, tokensJson);
   if (mode === 'production' && !tokensJson) throw new Error('生产模式必须配置 REPORTING_TOKENS_JSON');
   if (!['127.0.0.1', '::1', 'localhost'].includes(host) && !tokensJson)
     throw new Error('非本机监听必须配置 REPORTING_TOKENS_JSON');
@@ -55,7 +73,7 @@ export function readServerSettings(env: NodeJS.ProcessEnv = process.env): Server
     if (!isAbsolute(env.REPORTING_PDF_PYTHON) || !isAbsolute(env.REPORTING_PDF_FALLBACK_FONT))
       throw new Error('PDF Python 和字体必须使用绝对路径');
   }
-  return { mode, host, port, dataDirectory, includeDemoProjects, projectsFile, tokensJson };
+  return { mode, host, port, dataDirectory, includeDemoProjects, projectsFile, tokensJson, tokenActorsJson };
 }
 
 export function validatePdfRuntime(env: NodeJS.ProcessEnv = process.env): void {

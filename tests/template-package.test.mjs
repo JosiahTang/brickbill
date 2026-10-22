@@ -4,8 +4,89 @@ import ExcelJS from 'exceljs';
 import { createPinia, setActivePinia } from 'pinia';
 import { importTemplatePackage, loadExcel, METADATA_SHEET, PACKAGE_METADATA_MARKER } from '../src/export/importExcel.ts';
 import { exportTemplatePackage } from '../src/export/excel.ts';
-import { renameWorksheet, reorderWorksheets, upsertPageDefinition } from '../src/core/templates/package.ts';
+import { createTemplatePackage, renameWorksheet, reorderWorksheets, upsertPageDefinition } from '../src/core/templates/package.ts';
+import { newDocument, copy } from '../src/domain/model.ts';
 import { useDesignerStore } from '../src/stores/designer.ts';
+
+function sharedDictionaryPackage() {
+  const a = newDocument(), b = newDocument();
+  a.id = 'a'; b.id = 'b'; a.sheetName = 'A'; b.sheetName = 'B';
+  a.fields = [{ path: 'cert.no', fieldId: 'cert.no', label: 'No', format: 'text' }]; b.fields = copy(a.fields);
+  return createTemplatePackage({ worksheets: [{ worksheetId: 'a', document: a }, { worksheetId: 'b', document: b }] });
+}
+
+test('T45.1 failed package preparation preserves all editing state and history', () => {
+  setActivePinia(createPinia()); const store = useDesignerStore();
+  store.loadTemplatePackage(sharedDictionaryPackage()); store.setText('KEEP'); store.select({ r: 2, c: 1, rows: 1, cols: 1 });
+  const invalid = sharedDictionaryPackage(); invalid.worksheets[1].document.fields[0].format = 'number';
+  const before = copy(store.$state);
+  assert.throws(() => store.loadTemplatePackage(invalid), /定义冲突/);
+  assert.deepEqual(copy(store.$state), before);
+  const badId = sharedDictionaryPackage(); badId.worksheets[1].document.fields[0].fieldId = 'other.id';
+  assert.throws(() => store.loadTemplatePackage(badId), /定义冲突/);
+  assert.deepEqual(copy(store.$state), before);
+  const reserved = newDocument(); reserved.sheetName = '_brickbill_template';
+  assert.throws(() => store.loadDocument(reserved), /保留名称/);
+  assert.deepEqual(copy(store.$state), before);
+  store.undo(); assert.equal(store.doc.cells['0:0'], undefined); store.redo(); assert.equal(store.doc.cells['0:0'].text, 'KEEP');
+  store.switchWorksheet('b'); store.setText('B remains editable'); assert.equal(store.packageSnapshot().worksheets.length, 2);
+});
+
+test('T45.2 unrelated sheet undo preserves newer shared fields; unsafe dictionary undo does not consume history', async () => {
+  setActivePinia(createPinia()); const store = useDesignerStore(); store.loadTemplatePackage(sharedDictionaryPackage());
+  store.setText('A edit'); store.switchWorksheet('b');
+  const extra = { path: 'cert.extra', fieldId: 'cert.extra', label: 'Extra', format: 'text' };
+  store.saveField(extra); store.switchWorksheet('a'); store.undo();
+  assert.ok(store.doc.fields.some(field => field.path === extra.path));
+  assert.ok(store.packageSnapshot().worksheets.every(sheet => sheet.document.fields.some(field => field.path === extra.path)));
+  store.redo(); assert.equal(store.doc.cells['0:0'].text, 'A edit');
+  store.bind(0, 1, extra.path); store.switchWorksheet('b');
+  const before = copy(store.$state);
+  assert.throws(() => store.undo(), /字段|绑定/); assert.deepEqual(copy(store.$state), before);
+  store.switchWorksheet('a'); store.select({ r: 0, c: 1, rows: 1, cols: 1 }); store.unbind(); store.switchWorksheet('b');
+  store.undo(); assert.ok(!store.doc.fields.some(field => field.path === extra.path));
+  store.redo(); assert.ok(store.doc.fields.some(field => field.path === extra.path));
+  const reopened = await importTemplatePackage(await exportTemplatePackage(store.packageSnapshot()), 'undo.xlsx');
+  assert.ok(reopened.worksheets.every(sheet => sheet.document.fields.some(field => field.path === extra.path)));
+});
+
+test('T45.2 dictionary undo synchronizes formats and refuses to overwrite later same-field edits', () => {
+  setActivePinia(createPinia()); const store = useDesignerStore(); store.loadTemplatePackage(sharedDictionaryPackage());
+  store.bind(0, 0, 'cert.no'); store.switchWorksheet('b'); store.bind(0, 0, 'cert.no'); store.switchWorksheet('a');
+  const original = copy(store.doc.fields[0]);
+  store.saveField({ ...original, format: 'number', numberFormat: '0.000' }, original.path);
+  store.switchWorksheet('b'); assert.equal(store.doc.cells['0:0'].binding.format, 'number');
+  assert.equal(store.doc.cells['0:0'].numFmt, '0.000'); store.switchWorksheet('a'); store.undo();
+  assert.ok(store.packageSnapshot().worksheets.every(sheet => sheet.document.cells['0:0'].binding.format === 'text'));
+  store.redo(); store.switchWorksheet('b'); store.saveField({ ...store.doc.fields[0], label: 'Later' }, original.path);
+  store.switchWorksheet('a'); const before = copy(store.$state);
+  assert.throws(() => store.undo(), /较新|字段|冲突/); assert.deepEqual(copy(store.$state), before);
+});
+
+test('T45.2 same-id document replacement does not turn later cell undo into a package replacement', () => {
+  setActivePinia(createPinia()); const store = useDesignerStore();
+  store.loadDocument(newDocument()); const packageId = store.templatePackage.packageId, epoch = store.loadEpoch;
+  store.setText('Edit'); store.undo();
+  assert.equal(store.templatePackage.packageId, packageId); assert.equal(store.loadEpoch, epoch);
+  store.redo(); assert.equal(store.doc.cells['0:0'].text, 'Edit'); assert.equal(store.templatePackage.packageId, packageId);
+});
+
+test('T45.4 catalog import validates the entire batch before association and preserves manual aliases', () => {
+  setActivePinia(createPinia()); const store = useDesignerStore(); store.loadTemplatePackage(sharedDictionaryPackage());
+  const good = { path: 'qa.good', fieldId: 'qa.good', label: 'Good', format: 'number' };
+  const before = copy(store.$state);
+  assert.throws(() => store.importCatalogFields('project', '1.0.0', [good, { ...good, path: 'qa.bad', fieldId: 'qa.bad', label: '' }]), /字段名称/);
+  assert.deepEqual(copy(store.$state), before);
+  store.saveField({ ...good, path: 'qa.manual', label: 'Manual' });
+  assert.equal(store.importCatalogFields('project', '1.0.0', [good, { ...good, path: 'qa.other', fieldId: 'qa.other' },
+    { ...good, path: 'cert.no', fieldId: 'qa.collision' }]), 1);
+  const saved = store.packageSnapshot(); assert.equal(saved.projectId, 'project');
+  for (const sheet of saved.worksheets) {
+    assert.equal(sheet.document.fields.find(field => field.path === 'qa.manual').label, 'Manual');
+    assert.ok(!sheet.document.fields.some(field => field.path === 'qa.good'));
+    assert.equal(sheet.document.fields.find(field => field.path === 'cert.no').fieldId, 'cert.no');
+  }
+});
 
 test('imports, reorders, renames, saves and reopens a multi-sheet package without recursively embedding its source workbook', async () => {
   const workbook = new ExcelJS.Workbook();

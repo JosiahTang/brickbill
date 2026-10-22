@@ -4,6 +4,7 @@ import {
   type Rect, type TemplateDocument, type Field,
 } from './model.ts';
 import { validateFields, validPath } from './fields.ts';
+import { validImageRect } from './images.ts';
 
 export function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(message);
@@ -116,6 +117,17 @@ export function validateDocument(doc: TemplateDocument): void {
   assert(doc.rowHeightPx.length === doc.rows && doc.colWidthPx.length === doc.cols, '行列尺寸数量不匹配');
   assert(doc.rowHeightPx.every(v => Number.isFinite(v) && v > 0 && v <= 1000), '行高应大于 0 且不超过 1000 px');
   assert(doc.colWidthPx.every(v => Number.isFinite(v) && v > 0 && v <= 2000), '列宽应大于 0 且不超过 2000 px');
+  assert(doc.imageLayoutVersion === undefined || doc.imageLayoutVersion === 1, '不支持的图片定位版本');
+  if (doc.images !== undefined) {
+    assert(doc.imageLayoutVersion === 1 && Array.isArray(doc.images) && doc.images.length <= 1000, '图片定位 v1 格式无效');
+    const ids = new Set<string>(), indexes = new Set<number>();
+    for (const image of doc.images) {
+      assert(!!image && typeof image.imageId === 'string' && !!image.imageId && typeof image.resourceId === 'string' && !!image.resourceId, '图片标识无效');
+      assert(Number.isInteger(image.sourceIndex) && image.sourceIndex >= 0 && !indexes.has(image.sourceIndex) && !ids.has(image.imageId), '图片源索引或标识重复');
+      assert(validImageRect(image.rect, doc), '图片坐标或尺寸无效，或超出工作表范围');
+      ids.add(image.imageId); indexes.add(image.sourceIndex);
+    }
+  }
   const regions = doc.repeatRegions ?? [];
   assert(Array.isArray(regions) && regions.length <= 100, '明细区域最多支持 100 个');
   const regionIds = new Set<string>();

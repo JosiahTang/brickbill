@@ -1,6 +1,6 @@
 import { encodeCompositeKey } from '../adapters/project-adapter.ts';
 import { ReportingError } from '../contracts/errors.ts';
-import type { DataRecord, DatasetBundle, DataViewResult, Scalar } from '../contracts/types.ts';
+import type { ContractErrorCode, DataRecord, DatasetBundle, DataViewResult, Scalar } from '../contracts/types.ts';
 
 export interface ExpectedComparisonRecord {
   key: Record<string, Scalar>;
@@ -43,6 +43,8 @@ export interface XlsxImageExpectation {
   sheet: string;
   count: number;
   anchors?: Array<{ tl: { col: number; row: number }; br?: { col: number; row: number } }>;
+  /** Suite v2: encoded image bytes in worksheet placement order, not the XLSX archive hash. */
+  contentSha256?: string[];
 }
 export interface XlsxPageSetupExpectation {
   sheet: string;
@@ -64,6 +66,12 @@ export interface GenerationOutputExpectation {
   pageTypes?: string[];
   pages?: GenerationPageExpectation[];
   xlsx?: XlsxOutputExpectation;
+  templateMatch?: {
+    documentType?: string;
+    rule?: { conditions?: Record<string, string>; priority?: number };
+    facts?: Record<string, { value?: string; datasetId?: string; fieldId?: string; recordCount?: number }>;
+  };
+  signoff?: { actorId: string };
 }
 
 export interface ProjectComparisonCase {
@@ -73,12 +81,19 @@ export interface ProjectComparisonCase {
   sourceSnapshot?: string;
   assertions: ProjectComparisonAssertion[];
   generation?: GenerationOutputExpectation;
+  expectedError?: {
+    code: Extract<ContractErrorCode, 'DATA_NOT_FOUND' | 'DUPLICATE_KEY' | 'RELATION_CARDINALITY_ERROR'
+      | 'FIELD_NOT_FOUND' | 'VALUE_TYPE_ERROR' | 'VIEW_INVALID'>;
+    stage: 'collect' | 'view';
+    context?: Partial<Record<'datasetId' | 'fieldId' | 'viewId', string>>;
+  };
 }
 
 export interface ProjectComparisonSuite {
-  suiteVersion: 1;
+  suiteVersion: 1 | 2;
   suiteId: string;
   projectId: string;
+  baseline?: { sourceKind: 'synthetic' | 'customer'; referenceId: string; approvedBy?: string; approvedAt?: string };
   cases: ProjectComparisonCase[];
 }
 
@@ -158,7 +173,7 @@ function validateRecordKey(key: unknown, fields: string[], label: string): key i
 
 const xlsxCellTypes = ['blank', 'number', 'string', 'date', 'hyperlink', 'formula', 'sharedString', 'richText', 'boolean', 'error', 'merge'];
 
-function validateGenerationExpectation(value: unknown, label: string): asserts value is GenerationOutputExpectation {
+function validateGenerationExpectation(value: unknown, label: string, suiteVersion: 1 | 2): asserts value is GenerationOutputExpectation {
   if (!object(value) || typeof value.generationId !== 'string' || !value.generationId)
     contractError(`${label}.generation 必须提供非空 generationId`);
   if (value.templateRef !== undefined
@@ -210,6 +225,28 @@ function validateGenerationExpectation(value: unknown, label: string): asserts v
         contractError(`${label}.generation.pageTypes 必须与 pages 页面类型一致`);
     }
   }
+  if (value.templateMatch !== undefined) {
+    const expected = value.templateMatch;
+    if (!object(expected)) contractError(label + '.generation.templateMatch 必须是对象');
+    if (expected.documentType !== undefined && (typeof expected.documentType !== 'string' || !expected.documentType))
+      contractError(label + '.generation.templateMatch.documentType 必须是非空文本');
+    if (expected.rule !== undefined) {
+      if (!object(expected.rule)
+        || (expected.rule.priority !== undefined && !Number.isFinite(expected.rule.priority))
+        || (expected.rule.conditions !== undefined && (!object(expected.rule.conditions)
+          || Object.entries(expected.rule.conditions).some(([key, item]) => !key || typeof item !== 'string'))))
+        contractError(label + '.generation.templateMatch.rule 格式无效');
+    }
+    if (expected.facts !== undefined) {
+      if (!object(expected.facts) || Object.entries(expected.facts).some(([fact, value]) => !fact || !object(value)
+        || Object.entries(value).some(([key, item]) => !['value', 'datasetId', 'fieldId', 'recordCount'].includes(key)
+          || (key === 'recordCount' ? typeof item !== 'number' || !Number.isInteger(item) || item < 0 : typeof item !== 'string'))))
+        contractError(label + '.generation.templateMatch.facts 格式无效');
+    }
+  }
+  if (value.signoff !== undefined && (!object(value.signoff)
+    || typeof value.signoff.actorId !== 'string' || !value.signoff.actorId.trim()))
+    contractError(label + '.generation.signoff 必须包含非空 actorId');
   if (value.xlsx !== undefined) {
     const xlsx = value.xlsx;
     if (!object(xlsx)) contractError(`${label}.generation.xlsx 必须是对象`);
@@ -258,6 +295,12 @@ function validateGenerationExpectation(value: unknown, label: string): asserts v
           contractError(`${label}.generation.xlsx.images[${index}] 必须声明工作表、数量及可选锚点`);
         if (imageSheets.has(image.sheet)) contractError(`${label}.generation.xlsx.images[${index}] 重复声明了工作表`);
         imageSheets.add(image.sheet);
+        if (image.contentSha256 !== undefined) {
+          if (suiteVersion !== 2) contractError(`${label}.generation.xlsx.images[${index}].contentSha256 需要对照套件 v2 版本`);
+          if (!Array.isArray(image.contentSha256) || image.contentSha256.length !== image.count
+            || image.contentSha256.some(value => typeof value !== 'string' || !/^[0-9a-f]{64}$/.test(value)))
+            contractError(`${label}.generation.xlsx.images[${index}].contentSha256 必须逐图声明 64 位小写 SHA-256`);
+        }
         for (const anchor of (image.anchors ?? []) as unknown[]) {
           if (!object(anchor) || !object(anchor.tl)) contractError(`${label}.generation.xlsx.images[${index}] 存在无效图片锚点`);
           const tl = anchor.tl as Record<string, unknown>;
@@ -292,22 +335,47 @@ function validateGenerationExpectation(value: unknown, label: string): asserts v
     }
     if (!hasAssertion) contractError(`${label}.generation.xlsx 至少需要一种工作表、单元格、合并区、图片或打印设置断言`);
   }
-  if (value.templateRef === undefined && value.pageCount === undefined && value.pageTypes === undefined && value.pages === undefined && value.xlsx === undefined)
+  if (value.templateRef === undefined && value.pageCount === undefined && value.pageTypes === undefined
+    && value.pages === undefined && value.xlsx === undefined && value.templateMatch === undefined && value.signoff === undefined)
     contractError(`${label}.generation 至少需要模板、页面或 XLSX 预期`);
 }
 
 /** Validates the portable JSON suite used by both offline and online comparisons. */
 export function validateProjectComparisonSuite(input: unknown): ProjectComparisonSuite {
-  if (!object(input) || input.suiteVersion !== 1 || typeof input.suiteId !== 'string' || !input.suiteId
+  if (!object(input) || ![1, 2].includes(Number(input.suiteVersion)) || typeof input.suiteVersion !== 'number' || typeof input.suiteId !== 'string' || !input.suiteId
     || typeof input.projectId !== 'string' || !input.projectId || !Array.isArray(input.cases) || !input.cases.length)
-    contractError('对照套件必须包含 suiteVersion=1、suiteId、projectId 和非空 cases');
+    contractError('对照套件必须包含 suiteVersion=1 或 2、suiteId、projectId 和非空 cases');
+  if (input.baseline !== undefined) {
+    const baseline = input.baseline;
+    if (!object(baseline) || !['synthetic', 'customer'].includes(String(baseline.sourceKind))
+      || typeof baseline.referenceId !== 'string' || !baseline.referenceId.trim())
+      contractError('对照套件 baseline 必须声明 sourceKind 和 referenceId');
+    if (baseline.sourceKind === 'customer' && (typeof baseline.approvedBy !== 'string' || !baseline.approvedBy.trim()
+      || typeof baseline.approvedAt !== 'string' || Number.isNaN(Date.parse(baseline.approvedAt))))
+      contractError('客户对照基准必须记录 approvedBy 和有效 approvedAt');
+  }
   const caseIds = new Set<string>();
   for (const candidate of input.cases) {
     if (!object(candidate) || typeof candidate.caseId !== 'string' || !candidate.caseId
       || typeof candidate.documentType !== 'string' || !candidate.documentType
       || !object(candidate.businessKey) || !Array.isArray(candidate.assertions)
-      || (!candidate.assertions.length && candidate.generation === undefined))
-      contractError('每个对照用例必须包含 caseId、documentType、businessKey，以及数据断言或生成输出断言');
+      || (!candidate.assertions.length && candidate.generation === undefined && candidate.expectedError === undefined))
+      contractError('每个对照用例必须包含 caseId、documentType、businessKey，以及数据断言、生成输出断言或预期业务错误');
+    if (candidate.expectedError !== undefined) {
+      const expectedError = candidate.expectedError as Record<string, unknown>;
+      const allowedCodes = ['DATA_NOT_FOUND', 'DUPLICATE_KEY', 'RELATION_CARDINALITY_ERROR',
+        'FIELD_NOT_FOUND', 'VALUE_TYPE_ERROR', 'VIEW_INVALID'];
+      if (!object(expectedError) || !allowedCodes.includes(String(expectedError.code))
+        || !['collect', 'view'].includes(String(expectedError.stage))
+        || (candidate.assertions.length > 0 || candidate.generation !== undefined))
+        contractError('用例 ' + candidate.caseId + ' 的 expectedError 必须只声明预期业务错误，不能同时声明正常输出断言');
+      if (expectedError.context !== undefined) {
+        const context = expectedError.context;
+        if (!object(context) || Object.entries(context).some(([key, value]) =>
+          !['datasetId', 'fieldId', 'viewId'].includes(key) || typeof value !== 'string' || !value))
+          contractError('用例 ' + candidate.caseId + ' 的 expectedError.context 只支持非空 datasetId、fieldId、viewId');
+      }
+    }
     if (caseIds.has(candidate.caseId)) contractError(`对照用例标识重复：${candidate.caseId}`);
     caseIds.add(candidate.caseId);
     for (const [key, value] of Object.entries(candidate.businessKey))
@@ -315,7 +383,7 @@ export function validateProjectComparisonSuite(input: unknown): ProjectCompariso
     if (candidate.sourceSnapshot !== undefined
       && (typeof candidate.sourceSnapshot !== 'string' || !candidate.sourceSnapshot))
       contractError(`用例 ${candidate.caseId} 的 sourceSnapshot 必须是非空路径`);
-    if (candidate.generation !== undefined) validateGenerationExpectation(candidate.generation, `用例 ${candidate.caseId}`);
+    if (candidate.generation !== undefined) validateGenerationExpectation(candidate.generation, `用例 ${candidate.caseId}`, input.suiteVersion as 1 | 2);
     const assertionIds = new Set<string>();
     for (const rawAssertion of candidate.assertions) {
       if (!object(rawAssertion) || !['dataset', 'view'].includes(String(rawAssertion.scope))

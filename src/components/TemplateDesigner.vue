@@ -12,7 +12,7 @@ import { catalogDatasetField } from '../core/catalog/designer-field.ts';
 import { generateDocument, type GeneratedResult } from '../domain/generate.ts';
 import { mountUniver } from '../adapters/univer.ts';
 import { exportTemplate, exportTemplatePackage, downloadBlob, xlsxBlob } from '../export/excel.ts';
-import { importTemplatePackage, parseTemplatePackageJson, parseDocumentJson, MAX_FILE_SIZE } from '../export/importExcel.ts';
+import { importTemplatePackage, parseTemplatePackageJson, parseDocumentJson, hydrateTemplateImages, MAX_FILE_SIZE } from '../export/importExcel.ts';
 import { createHostBridge } from '../bridge/host.ts';
 import PagedPreview from './preview/PagedPreview.vue';
 import ViewEditor from './configuration/ViewEditor.vue';
@@ -22,9 +22,9 @@ import OrderEditor from './configuration/OrderEditor.vue';
 import ViewTrialResults from './configuration/ViewTrialResults.vue';
 import { stepScope, type DesignerMetadata } from '../core/designer/configuration.ts';
 import { remainingCapacity } from '../core/pagination/fixed.ts';
-import { upsertPageDefinition } from '../core/templates/package.ts';
+import { createTemplatePackage, upsertPageDefinition } from '../core/templates/package.ts';
 import type { ViewPreviewReply } from '../services/reporting.ts';
-import { ReportingClient, defaultReportingBaseUrl, type GenerationHistoryPage, type GenerationPageReply, type GenerationReply,
+import { ReportingClient, defaultReportingBaseUrl, type GenerationHistoryItem, type GenerationHistoryPage, type GenerationPageReply, type GenerationReply,
   type ReportingProject, type ReportingTemplateSummary } from '../services/reporting.ts';
 import type { ProjectedSheetPage } from '../core/render/page.ts';
 import type { PagePlan, ReportingErrorShape, TemplatePackage as ReportingTemplatePackage } from '../core/contracts/types.ts';
@@ -45,17 +45,44 @@ const generated = ref<GeneratedResult>();
 const serviceBaseUrl = ref(defaultReportingBaseUrl), serviceToken = ref('');
 const serviceProjects = ref<ReportingProject[]>([]), serviceProjectId = ref(''), serviceDocumentType = ref('');
 const serviceBusinessKeyText = ref('{}'), serviceDraftRevision = ref(0), servicePublishedVersion = ref<number>();
+const serviceEditSession = ref<{ epoch: number; namespace: string; projectId: string; templateId: string; revision: number;
+  savedContent?: string; viewRevisions: Record<string, number> }>();
+let serviceSelectionSequence = 0, serviceRefreshSequence = 0, serviceMatchSequence = 0, serviceTrialSequence = 0;
+let serviceCatalogSequence = 0;
+function editSession() {
+  const template = store.templatePackage;
+  if (!template) throw new Error('请先打开模板');
+  const namespace = stableConfig([serviceBaseUrl.value, serviceToken.value]);
+  if (!serviceEditSession.value || serviceEditSession.value.epoch !== store.loadEpoch || serviceEditSession.value.namespace !== namespace
+    || serviceEditSession.value.projectId !== template.projectId || serviceEditSession.value.templateId !== template.packageId)
+    serviceEditSession.value = { epoch: store.loadEpoch, namespace, projectId: template.projectId, templateId: template.packageId, revision: 0, viewRevisions: {} };
+  return serviceEditSession.value;
+}
+function selectionScope() { return stableConfig([serviceBaseUrl.value, serviceToken.value, serviceProjectId.value, serviceSelectedTemplateId.value]); }
+function localEditScope() { return stableConfig([store.loadEpoch, store.templatePackage?.packageId,
+  store.templatePackage?.revision, store.doc.id, store.doc.revision, store.activeWorksheetId]); }
+function matchRequestScope() {
+  return stableConfig([selectionScope(), serviceDocumentType.value, serviceBusinessValues.value, serviceAutoMatch.value]);
+}
 const serviceBusinessValues = ref<Record<string, string>>({}), serviceTemplates = ref<ReportingTemplateSummary[]>([]);
 const serviceSelectedTemplateId = ref(''), serviceTemplateVersions = ref<Array<{ itemId: string; version: number; publishedAt: string }>>([]);
 const serviceSelectedTemplateVersion = ref<number>();
+const serviceObservedDraftRevision = ref(0);
+const serviceMatchCopyVersion = ref<number>();
 const serviceHistory = ref<GenerationHistoryPage>(), serviceHistoryQuery = ref(''), serviceHistoryTemplateId = ref('');
 const serviceHistoryStatus = ref<'all' | 'preview' | 'issue'>('all'), serviceHistoryFrom = ref(''), serviceHistoryTo = ref(''), serviceHistoryPage = ref(1);
-const serviceAutoMatch = ref(false), serviceMatchPriority = ref(100), serviceMatchConditionsText = ref('{}');
+const serviceAutoMatch = ref(false), serviceMatchPriority = ref(100);
+const serviceMatchConditions = ref<Record<string, string>>({}), serviceMatchInspection = ref<Awaited<ReturnType<ReportingClient['inspectTemplateMatches']>>>();
+const serviceMatchRuleDocumentType = ref(''), serviceHasMatchRule = ref(false);
+const serviceViewDraftRevisions = ref<Record<string, number>>({}), serviceObservedViewDraftRevisions = ref<Record<string, number>>({});
+const serviceTrialVersionMode = ref<'draft' | 'pinned'>('draft');
+const servicePreflightSummary = ref('');
 const serviceError = ref(''), serviceViewSummary = ref(''), serviceGeneration = ref<GenerationReply>();
 const designerMetadata = ref<DesignerMetadata>(), currentView = ref<DataViewDefinition>(), currentViewError = ref('');
 const viewEditor = ref<InstanceType<typeof ViewEditor>>();
 const trialResult = ref<ViewPreviewReply>(), trialFingerprint = ref('');
-const configurationFingerprint = computed(() => JSON.stringify([store.templatePackage?.revision, store.doc.revision, currentView.value, pageForm, pageRegionRect.value, pageRegionWorksheetId.value, store.activeWorksheetId, store.selection, serviceProjectId.value, serviceDocumentType.value, serviceBusinessValues.value]));
+const configurationFingerprint = computed(() => JSON.stringify([store.templatePackage?.revision, store.doc.revision, currentView.value, pageForm, pageRegionRect.value, pageRegionWorksheetId.value, store.activeWorksheetId, store.selection, serviceProjectId.value, serviceDocumentType.value, serviceBusinessValues.value, serviceTrialVersionMode.value, serviceSelectedTemplateVersion.value]));
+const trialRequestScope = computed(() => stableConfig([selectionScope(), store.loadEpoch, configurationFingerprint.value]));
 const availableViews = computed(() => [...new Map([...(designerMetadata.value?.views ?? []),
   ...(store.templatePackage?.projectId === serviceProjectId.value ? viewDrafts.value : []),
   ...(currentView.value ? [currentView.value] : [])].map(view => [view.viewId, view])).values()]);
@@ -86,12 +113,29 @@ const serviceErrorIssue = ref<ReportingErrorShape>();
 const servicePageNumber = ref(0), servicePageSheets = ref<ProjectedSheetPage[]>([]), servicePageResources = ref<NonNullable<ReportingTemplatePackage['resources']>>([]);
 const servicePageDiagnostics = ref<ReportingErrorShape[]>([]), servicePageLoading = ref(false), servicePagePlan = ref<PagePlan>();
 const serviceIdempotencyKey = ref('');
+const serviceIdempotencyFingerprint = ref('');
 const serviceGenerationTemplateLabel = computed(() => {
   const templateRef = serviceGeneration.value?.snapshot.templateRef as { packageId?: string; revision?: number } | undefined;
   return templateRef ? `${templateRef.packageId ?? ''}@${templateRef.revision ?? ''}` : '';
 });
 const serviceViewDraftCount = computed(() => store.templatePackage?.viewDrafts?.length ?? 0);
+const serviceDraftRemoteChanged = computed(() => !!store.templatePackage && store.templatePackage.packageId === serviceSelectedTemplateId.value
+  && serviceObservedDraftRevision.value !== serviceDraftRevision.value);
+const serviceViewsRemoteChanged = computed(() => Object.entries(serviceViewDraftRevisions.value)
+  .some(([id, revision]) => serviceObservedViewDraftRevisions.value[id] !== undefined && serviceObservedViewDraftRevisions.value[id] !== revision));
+const serviceHasUnsavedChanges = computed(() => !store.templatePackage || !serviceEditSession.value
+  || serviceEditSession.value.epoch !== store.loadEpoch
+  || serviceEditSession.value.namespace !== stableConfig([serviceBaseUrl.value, serviceToken.value])
+  || store.templatePackage.packageId !== serviceSelectedTemplateId.value || store.templatePackage.projectId !== serviceProjectId.value
+  || serviceEditSession.value.savedContent !== templateContentKey(store.packageSnapshot()));
 const serviceBusinessFields = computed(() => Object.entries(serviceProjects.value.find(item => item.projectId === serviceProjectId.value)?.businessKey ?? {}));
+const serviceMatchFields = computed(() => {
+  const project = serviceProjects.value.find(item => item.projectId === serviceProjectId.value);
+  return [
+    ...Object.entries(project?.businessKey ?? {}).map(([id, definition]) => [id, { ...definition, source: '业务查询参数' }] as const),
+    ...Object.entries(project?.templateMatchFields ?? {}).map(([id, definition]) => [id, { ...definition, source: `${definition.datasetId}.${definition.fieldId}` }] as const),
+  ];
+});
 const oldPath = ref<string>();
 const fieldForm = reactive({ path: '', label: '', format: 'text' as Format, collection: '', group: '', required: false, example: '', numberFormat: '', fieldId: '', sourceKind: 'legacy' as NonNullable<Field['sourceKind']>, datasetId: '', viewId: '', sourceFieldId: '', parameterId: '', unit: '', grain: '', constantValue: '', pageField: 'number' as NonNullable<Field['pageField']> });
 const regionForm = reactive({ id: '', name: '', source: '', parentId: '', start: 1, end: 1, empty: 'keep' as 'keep' | 'remove' });
@@ -151,11 +195,16 @@ function syncGrid() {
       grid?.dispose(); container.value.replaceChildren();
       grid = mountUniver(container.value, store.snapshot(), {
         select(rect) { try { store.select(rect); } catch { /* Ignore header selections. */ } }, dragOver, drop,
+        updateImage(imageId, rect) { perform(() => store.updateImage(imageId, rect)); },
       }, zoom.value); gridShape = shape;
     } else grid.render(store.snapshot());
+    grid.renderImages(store.snapshot(), store.templatePackage?.resources ?? []);
     projectionError.value = '';
   } catch (error) { projectionError.value = message(error); }
 }
+watch(matchRequestScope, () => { serviceMatchSequence++; serviceMatchInspection.value = undefined; }, { flush: 'sync' });
+watch(() => stableConfig([selectionScope(), store.loadEpoch, designerMetadata.value?.catalog.catalogVersion]), () => { serviceCatalogSequence++; }, { flush: 'sync' });
+watch(trialRequestScope, () => { serviceTrialSequence++; }, { flush: 'sync' });
 watch(() => [store.doc.revision, store.selection] as const, () => {
   const cell = store.selectedCell;
   form.text = cell?.text ?? ''; form.field = cell?.binding?.path ?? ''; form.format = cell?.binding?.format ?? 'text';
@@ -170,15 +219,19 @@ watch(() => store.doc.revision, () => {
 }, { flush: 'post' });
 watch(() => store.templatePackage?.revision, () => {
   if (!ready.value) return;
-  saveStatus.value = '有未保存修改'; clearTimeout(saveTimer); saveTimer = setTimeout(persist, 600);
+  syncGrid(); saveStatus.value = '有未保存修改'; clearTimeout(saveTimer); saveTimer = setTimeout(persist, 600);
 }, { flush: 'post' });
 watch(() => store.activeWorksheetId, () => { if (ready.value) {
   syncGrid(); sheetNameInput.value = store.doc.sheetName;
   if (!pageForm.pageDefinitionId) resetNewPageBounds();
 } }, { flush: 'post' });
 onMounted(async () => {
+  const scope = localEditScope();
   try { const draft = await loadDraft(); if (draft) {
-    if ('worksheets' in draft) store.loadTemplatePackage(draft); else store.loadDocument(draft);
+    const template = await hydrateTemplateImages('worksheets' in draft ? draft
+      : createTemplatePackage({ worksheets: [{ document: draft }] }));
+    if (destroyed || scope !== localEditScope()) return;
+    store.loadTemplatePackage(template);
     store.past = []; sheetNameInput.value = store.doc.sheetName; saveStatus.value = '已恢复本地草稿';
     resetNewPageBounds();
   } }
@@ -358,18 +411,26 @@ function saveRegion() { perform(() => {
 async function importSelected(event: Event) {
   const input = event.target as HTMLInputElement, file = input.files?.[0]; input.value = ''; if (!file) return;
   await performAsync(async () => {
+    const scope = localEditScope();
+    const accept = (template: TemplatePackage) => {
+      if (destroyed || scope !== localEditScope()) return false;
+      loadImportedPackage(template); return true;
+    };
+    try {
     const jsonFile = /\.json$/i.test(file.name);
     if (file.size > (jsonFile ? 40 * 1024 * 1024 : MAX_FILE_SIZE)) throw new Error(jsonFile ? '模板 JSON 不能超过 40 MiB' : 'Excel 文件不能超过 20 MiB');
     if (/\.json$/i.test(file.name)) {
       const text = await file.text();
       const value: unknown = JSON.parse(text);
-      if (value && typeof value === 'object' && 'worksheets' in value) loadImportedPackage(parseTemplatePackageJson(text));
-      else store.loadDocument(parseDocumentJson(text));
+      const template = value && typeof value === 'object' && 'worksheets' in value ? parseTemplatePackageJson(text)
+        : createTemplatePackage({ worksheets: [{ document: parseDocumentJson(text) }] });
+      if (!accept(await hydrateTemplateImages(template))) return;
       ElMessage.success('模板已打开'); return;
     }
     if (!/\.xlsx$/i.test(file.name)) throw new Error('请选择 .xlsx 模板或已保存的模板 JSON');
     const bytes = new Uint8Array(await file.arrayBuffer());
-    loadImportedPackage(await importTemplatePackage(bytes, file.name)); ElMessage.success(`已导入 ${store.worksheets.length} 个工作表，可开始拖拽绑定`);
+    if (accept(await importTemplatePackage(bytes, file.name))) ElMessage.success(`已导入 ${store.worksheets.length} 个工作表，可开始拖拽绑定`);
+    } catch (error) { if (!destroyed && scope === localEditScope()) throw error; }
   });
 }
 function loadImportedPackage(template: TemplatePackage) {
@@ -391,7 +452,10 @@ function saveTemplate() { void performAsync(async () => {
 function exportJson() { const snapshot = store.packageSnapshot(); downloadBlob(new Blob([JSON.stringify(snapshot, null, 2)], { type: 'application/json' }), `${snapshot.name}.json`); }
 function exportGenerated() { void performAsync(async () => {
   if (!generated.value) return;
-  const bytes = await exportTemplate(generated.value.document, { embed: false, rowMap: generated.value.rowMap });
+  const document = copy(generated.value.document);
+  if (document.excelSource && !document.excelSource.base64 && store.templatePackage?.sourceWorkbook)
+    document.excelSource.base64 = store.templatePackage.sourceWorkbook.base64;
+  const bytes = await exportTemplate(document, { embed: false, rowMap: generated.value.rowMap, resources: store.templatePackage?.resources });
   downloadBlob(xlsxBlob(bytes), `${store.doc.name}-生成结果.xlsx`); ElMessage.success('已发起生成结果下载');
 }); }
 function reportingClient() { return new ReportingClient(serviceBaseUrl.value, serviceToken.value); }
@@ -417,8 +481,11 @@ function serviceProjectChanged() {
   }
   serviceBusinessValues.value = examples;
   syncServiceBusinessKeyText();
-  serviceAutoMatch.value = false; serviceMatchConditionsText.value = '{}'; serviceMatchPriority.value = 100;
-  serviceDraftRevision.value = 0; servicePublishedVersion.value = undefined; serviceIdempotencyKey.value = '';
+  serviceAutoMatch.value = false; serviceMatchConditions.value = {}; serviceMatchInspection.value = undefined;
+  serviceHasMatchRule.value = false; serviceMatchRuleDocumentType.value = serviceDocumentType.value;
+  serviceMatchPriority.value = 100; serviceViewDraftRevisions.value = {}; serviceObservedViewDraftRevisions.value = {}; serviceTrialVersionMode.value = 'draft';
+  serviceDraftRevision.value = 0; serviceObservedDraftRevision.value = 0; servicePublishedVersion.value = undefined; serviceIdempotencyKey.value = '';
+  serviceIdempotencyFingerprint.value = ''; servicePreflightSummary.value = '';
   serviceSelectedTemplateId.value = store.templatePackage?.projectId === project.projectId ? store.templatePackage.packageId : '';
   serviceSelectedTemplateVersion.value = undefined; serviceTemplateVersions.value = [];
   serviceHistory.value = undefined; serviceHistoryPage.value = 1;
@@ -426,10 +493,6 @@ function serviceProjectChanged() {
   serviceHistoryFrom.value = ''; serviceHistoryTo.value = '';
   serviceViewSummary.value = ''; serviceError.value = ''; trialResult.value = undefined;
   designerMetadata.value = undefined; currentView.value = undefined; currentViewError.value = '';
-  const requestedProject = project.projectId;
-  void reportingClient().getDesignerMetadata(requestedProject).then(metadata => {
-    if (serviceProjectId.value === requestedProject) designerMetadata.value = metadata;
-  }).catch(captureServiceError);
   void refreshServiceTemplateState();
 }
 async function openReporting() {
@@ -443,50 +506,155 @@ async function openReporting() {
 }
 async function refreshServiceTemplateState() {
   if (!serviceProjectId.value) return;
+  const requestedProject = serviceProjectId.value, sequence = ++serviceRefreshSequence, scope = selectionScope();
+  const current = () => sequence === serviceRefreshSequence && selectionScope() === scope;
   const client = reportingClient();
   try {
-    serviceTemplates.value = await client.getTemplates(serviceProjectId.value);
-    const currentId = store.templatePackage?.projectId === serviceProjectId.value ? store.templatePackage.packageId : '';
+    const metadata = await client.getDesignerMetadata(requestedProject);
+    if (!current()) return;
+    designerMetadata.value = metadata;
+    await refreshViewDraftRevisions(metadata, requestedProject);
+    const templates = await client.getTemplates(requestedProject);
+    if (!current()) return;
+    serviceTemplates.value = templates;
+    const currentId = store.templatePackage?.projectId === requestedProject ? store.templatePackage.packageId : '';
     if (!serviceSelectedTemplateId.value || !serviceTemplates.value.some(item => item.templateId === serviceSelectedTemplateId.value))
       serviceSelectedTemplateId.value = currentId || serviceTemplates.value[0]?.templateId || '';
     await selectServiceTemplate(serviceSelectedTemplateId.value);
-  } catch (error) { serviceError.value = message(error); }
+  } catch (error) { if (current()) serviceError.value = message(error); }
 }
 async function selectServiceTemplate(templateId: string) {
+  const hasLocalPackage = store.templatePackage?.projectId === serviceProjectId.value && store.templatePackage.packageId === templateId;
   serviceSelectedTemplateId.value = templateId;
+  const scope = selectionScope(), sequence = ++serviceSelectionSequence, projectId = serviceProjectId.value;
+  const current = () => scope === selectionScope() && sequence === serviceSelectionSequence;
   serviceSelectedTemplateVersion.value = undefined;
   serviceTemplateVersions.value = [];
-  serviceDraftRevision.value = 0; servicePublishedVersion.value = undefined;
+  serviceDraftRevision.value = hasLocalPackage ? editSession().revision : 0; servicePublishedVersion.value = undefined;
   if (!templateId || !serviceProjectId.value) return;
   const client = reportingClient();
   try {
-    serviceTemplateVersions.value = await client.getTemplateVersions(serviceProjectId.value, templateId);
+    const versions = await client.getTemplateVersions(projectId, templateId);
+    if (!current()) return;
+    serviceTemplateVersions.value = versions;
     const summary = serviceTemplates.value.find(item => item.templateId === templateId);
     serviceSelectedTemplateVersion.value = summary?.latestVersion ?? serviceTemplateVersions.value.at(-1)?.version;
     servicePublishedVersion.value = summary?.latestVersion;
-  } catch (error) { if ((error as { code?: string }).code !== 'DATA_NOT_FOUND') serviceError.value = message(error); }
+    serviceMatchCopyVersion.value = serviceTemplateVersions.value.filter(item => item.version !== servicePublishedVersion.value).at(-1)?.version;
+  } catch (error) { if (!current()) return; if ((error as { code?: string }).code !== 'DATA_NOT_FOUND') serviceError.value = message(error); }
   try {
-    const draft = await client.getTemplateDraft(serviceProjectId.value, templateId);
-    serviceDraftRevision.value = draft.revision;
-  } catch (error) { if ((error as { code?: string }).code !== 'DATA_NOT_FOUND') serviceError.value = message(error); }
+    const draft = await client.getTemplateDraft(projectId, templateId);
+    if (!current()) return;
+    serviceObservedDraftRevision.value = draft.revision;
+    serviceDraftRevision.value = hasLocalPackage ? editSession().revision : draft.revision;
+  } catch (error) {
+    if (!current()) return;
+    if ((error as { code?: string }).code === 'DATA_NOT_FOUND') { serviceObservedDraftRevision.value = 0; if (!hasLocalPackage) serviceDraftRevision.value = 0; }
+    else serviceError.value = message(error);
+  }
+  await loadServiceMatchRule();
+}
+async function refreshViewDraftRevisions(metadata: DesignerMetadata, projectId: string) {
+  const epoch = store.loadEpoch, scope = selectionScope();
+  const ids = new Set(metadata.views.map(view => view.viewId));
+  if (store.templatePackage?.projectId === projectId) for (const view of store.templatePackage.viewDrafts ?? []) ids.add(view.viewId);
+  const entries = await Promise.all([...ids].map(async id => {
+    try { return [id, await reportingClient().getViewDraft(projectId, id)] as const; }
+    catch (error) { if ((error as { code?: string }).code === 'DATA_NOT_FOUND') return [id, undefined] as const; throw error; }
+  }));
+  if (selectionScope() === scope && store.loadEpoch === epoch) {
+    const observed = Object.fromEntries(entries.map(([id, remote]) => [id, remote?.revision ?? 0]));
+    serviceObservedViewDraftRevisions.value = observed;
+    const hasLocalPackage = store.templatePackage?.projectId === projectId;
+    if (!hasLocalPackage) { serviceViewDraftRevisions.value = {}; return; }
+    const session = editSession();
+    for (const [id, remote] of entries) {
+      const local = store.templatePackage?.viewDrafts?.find(view => view.viewId === id);
+      if (local && session.viewRevisions[id] === undefined)
+        session.viewRevisions[id] = remote && sameViewContent(remote.value, local) ? remote.revision : 0;
+    }
+    serviceViewDraftRevisions.value = { ...session.viewRevisions };
+  }
+}
+async function loadServiceMatchRule() {
+  const id = serviceSelectedTemplateId.value, version = servicePublishedVersion.value, scope = selectionScope(), sequence = serviceSelectionSequence;
+  const current = () => selectionScope() === scope && sequence === serviceSelectionSequence;
+  serviceMatchInspection.value = undefined;
+  if (!id || !version) { serviceMatchConditions.value = {}; serviceHasMatchRule.value = false; return; }
+  try {
+    const rule = await reportingClient().getTemplateMatchRule(serviceProjectId.value, id, version);
+    if (!current()) return;
+    serviceMatchRuleDocumentType.value = rule.documentType; serviceHasMatchRule.value = true;
+    serviceMatchConditions.value = { ...rule.conditions }; serviceMatchPriority.value = rule.priority;
+  } catch (error) {
+    if (!current()) return;
+    if ((error as { code?: string }).code === 'DATA_NOT_FOUND') { serviceMatchConditions.value = {}; serviceHasMatchRule.value = false; serviceMatchRuleDocumentType.value = serviceDocumentType.value; }
+    else serviceError.value = message(error);
+  }
 }
 function openServiceTemplateVersion() { void performAsync(async () => {
   const templateId = serviceSelectedTemplateId.value, version = serviceSelectedTemplateVersion.value;
+  const scope = selectionScope(); let editScope = localEditScope();
+  const current = () => !destroyed && selectionScope() === scope && editScope === localEditScope() && version === serviceSelectedTemplateVersion.value;
+  try {
   if (!templateId || !version) throw new Error('请选择已发布模板版本');
   const record = await reportingClient().getTemplateVersion(serviceProjectId.value, templateId, version);
-  store.loadTemplatePackage(record.value);
+  const template = await hydrateTemplateImages(record.value);
+  if (!current()) return;
+  store.loadTemplatePackage(template);
+  editScope = localEditScope();
+  editSession();
   servicePublishedVersion.value = record.version;
   serviceError.value = '';
   ElMessage.success(`已打开模板 ${templateId} 第 ${record.version} 版；保存草稿后可在此版本基础上继续修改`);
+  } catch (error) { if (current()) throw error; }
 }); }
 function openServiceTemplateDraft() { void performAsync(async () => {
   const templateId = serviceSelectedTemplateId.value;
+  const scope = selectionScope(); let editScope = localEditScope();
+  const current = () => !destroyed && selectionScope() === scope && editScope === localEditScope();
+  try {
   if (!templateId) throw new Error('请选择项目模板');
   const record = await reportingClient().getTemplateDraft(serviceProjectId.value, templateId);
-  store.loadTemplatePackage(record.value);
-  serviceDraftRevision.value = record.revision; servicePublishedVersion.value = serviceTemplates.value.find(item => item.templateId === templateId)?.latestVersion;
+  const template = await hydrateTemplateImages(record.value);
+  if (!current()) return;
+  store.loadTemplatePackage(template);
+  editScope = localEditScope();
+  editSession().revision = record.revision;
+  editSession().savedContent = templateContentKey(store.packageSnapshot());
+  serviceDraftRevision.value = record.revision; serviceObservedDraftRevision.value = record.revision;
+  servicePublishedVersion.value = serviceTemplates.value.find(item => item.templateId === templateId)?.latestVersion;
+  if (designerMetadata.value) await refreshViewDraftRevisions(designerMetadata.value, serviceProjectId.value);
+  if (!current()) return;
   serviceError.value = '';
   ElMessage.success(`已打开模板草稿修订 ${record.revision}`);
+  } catch (error) { if (current()) throw error; }
+}); }
+function reloadServiceViewDrafts() { void performAsync(async () => {
+  const projectId = serviceProjectId.value, epoch = store.loadEpoch, scope = selectionScope();
+  const local = store.templatePackage?.viewDrafts ?? [];
+  const records = await Promise.all(local.map(view => reportingClient().getViewDraft(projectId, view.viewId)));
+  if (scope !== selectionScope() || epoch !== store.loadEpoch) return;
+  const session = editSession();
+  for (const record of records) {
+    store.saveViewDraft(record.value);
+    session.viewRevisions[record.value.viewId] = record.revision;
+  }
+  serviceViewDraftRevisions.value = { ...session.viewRevisions };
+  serviceObservedViewDraftRevisions.value = { ...session.viewRevisions };
+  session.savedContent = undefined;
+  serviceError.value = ''; ElMessage.success('已重新载入服务端视图草稿，请保存模板');
+}); }
+function preflightServiceTemplate() { void performAsync(async () => {
+  const template = store.templatePackage;
+  if (!template || template.projectId !== serviceProjectId.value || template.packageId !== serviceSelectedTemplateId.value)
+    throw new Error('请先打开所选项目模板草稿');
+  if (serviceHasUnsavedChanges.value) throw new Error('模板有未保存修改，请先保存草稿再执行发布预检');
+  const scope = selectionScope(), epoch = store.loadEpoch;
+  const result = await reportingClient().preflightTemplate(serviceProjectId.value, template.packageId, serviceDraftRevision.value);
+  if (scope !== selectionScope() || epoch !== store.loadEpoch) return;
+  servicePreflightSummary.value = `预检通过：草稿修订 ${result.draftRevision}，锁定 ${result.viewRefs.length} 个视图版本、${result.functionRefs.length} 个函数版本`;
+  serviceError.value = ''; ElMessage.success(servicePreflightSummary.value);
 }); }
 function syncServiceBusinessKeyText() { serviceBusinessKeyText.value = JSON.stringify(serviceBusinessValues.value, null, 2); }
 function applyServiceBusinessKeyJson() {
@@ -498,6 +666,7 @@ function applyServiceBusinessKeyJson() {
   if (Object.keys(value).some(fieldId => !allowed.has(fieldId))) throw new Error('JSON 包含项目未登记的业务参数');
   serviceBusinessValues.value = Object.fromEntries(serviceBusinessFields.value.map(([fieldId]) => [fieldId,
     (value as Record<string, string>)[fieldId] ?? '']));
+  serviceIdempotencyKey.value = ''; serviceMatchInspection.value = undefined;
   ElMessage.success('业务参数表单已从高级 JSON 更新');
 }
 function serviceBusinessKey(): Record<string, string> {
@@ -514,88 +683,221 @@ function serviceBusinessKey(): Record<string, string> {
   return value;
 }
 function importServiceCatalog() { void performAsync(async () => {
-  if (designerMetadata.value) store.associateProject(serviceProjectId.value, designerMetadata.value.catalog.catalogVersion);
-  const catalog = await reportingClient().getCatalog(serviceProjectId.value); let count = 0;
-  for (const item of catalog.fields) {
-    const field = catalogDatasetField(item);
-    if (!field) continue;
-    if (fields.value.some(field => field.fieldId === item.fieldId || field.path === item.fieldId)) continue;
-    store.saveField(field);
-    count++;
+  if (!designerMetadata.value || designerMetadata.value.project.projectId !== serviceProjectId.value)
+    throw new Error('请等待所选项目的数据目录加载完成');
+  const projectId = serviceProjectId.value, scope = selectionScope(), epoch = store.loadEpoch;
+  const catalogVersion = designerMetadata.value?.catalog.catalogVersion, sequence = ++serviceCatalogSequence;
+  const current = () => !destroyed && epoch === store.loadEpoch && scope === selectionScope() && sequence === serviceCatalogSequence
+    && designerMetadata.value?.project.projectId === projectId && designerMetadata.value.catalog.catalogVersion === catalogVersion;
+  try {
+    if (!current()) throw new Error('请等待所选项目的数据目录加载完成');
+    const catalog = await reportingClient().getCatalog(projectId);
+    if (!current()) return;
+    if (catalog.catalogVersion !== catalogVersion) throw new Error('项目字段目录版本已变化，请刷新项目后重试');
+    const count = store.importCatalogFields(projectId, catalog.catalogVersion,
+      catalog.fields.flatMap(item => { const field = catalogDatasetField(item); return field ? [field] : []; }));
+    ElMessage.success(`已从项目目录新增 ${count} 个字段，现有手工字段保持不变`);
+  } catch (error) {
+    if (current()) throw error;
   }
-  ElMessage.success(`已从项目目录新增 ${count} 个字段，现有手工字段保持不变`);
 }); }
+function commitImageResources(update: (current: NonNullable<TemplatePackage['resources']>) => NonNullable<TemplatePackage['resources']>, epoch: number) {
+  if (destroyed || epoch !== store.loadEpoch) return false;
+  const current = store.templatePackage?.resources ?? [], next = update(current);
+  if (next !== current) store.saveResources(next);
+  return true;
+}
 function testServiceViews(offset: unknown = 0, layout = false) { void performAsync(async () => {
+  const scope = trialRequestScope.value, sequence = ++serviceTrialSequence, fingerprint = configurationFingerprint.value;
+  const current = () => !destroyed && scope === trialRequestScope.value && sequence === serviceTrialSequence;
   try {
   if (!designerMetadata.value) throw new Error('请先打开项目服务并载入项目数据目录');
-  if (store.templatePackage?.projectId !== serviceProjectId.value) throw new Error('当前模板不属于所选项目，请先打开该项目模板');
-  if (activeTab.value === 'views' && currentViewError.value) throw new Error(currentViewError.value);
+  if (serviceTrialVersionMode.value === 'draft' && store.templatePackage?.projectId !== serviceProjectId.value) throw new Error('当前模板不属于所选项目，请先打开该项目模板');
+  if (serviceTrialVersionMode.value === 'pinned' && (!serviceSelectedTemplateId.value || !serviceSelectedTemplateVersion.value))
+    throw new Error('固定版本试算需要先选择一个已发布模板版本');
+  if (serviceTrialVersionMode.value === 'draft' && activeTab.value === 'views' && currentViewError.value) throw new Error(currentViewError.value);
+  const client = reportingClient();
   const drafts = new Map(viewDrafts.value.map(view => [view.viewId, view]));
-  if (activeTab.value === 'views' && currentView.value) drafts.set(currentView.value.viewId, copy(currentView.value));
-  const pageConfiguration = layout ? buildPageConfiguration() : undefined;
+  if (serviceTrialVersionMode.value === 'draft' && activeTab.value === 'views' && currentView.value) drafts.set(currentView.value.viewId, copy(currentView.value));
+  const pageConfiguration = layout && serviceTrialVersionMode.value === 'draft' ? buildPageConfiguration() : undefined;
   const template = pageConfiguration ? upsertPageDefinition(store.packageSnapshot(), pageConfiguration) : undefined;
-  const trialTemplate = template ?? store.templatePackage!;
-  const rootIds = activeTab.value === 'views' && currentView.value && !layout ? [currentView.value.viewId]
-    : [...new Set([...trialTemplate.viewRefs.map(ref => ref.viewId),
-      ...(trialTemplate.pageDefinitions ?? []).flatMap(page => page.regions.flatMap(region => [region.viewId, region.appendixIfViewHasRecords].filter((id): id is string => !!id))),
-      ...trialTemplate.worksheets.flatMap(sheet => (sheet.document.fields ?? []).map(field => field.viewId).filter((id): id is string => !!id)),
-      ...(!layout ? [...drafts.keys()] : []),
-    ])];
-  const result = await reportingClient().previewViews(serviceProjectId.value, { documentType: serviceDocumentType.value, businessKey: serviceBusinessKey(),
-    definitions: [...drafts.values()], viewIds: rootIds, offset: typeof offset === 'number' ? offset : 0, limit: 100,
-    ...(template ? { template, pageDefinitionId: pageConfiguration?.pageType === 'main' ? pageConfiguration.pageDefinitionId : pageConfiguration?.continuationOf || undefined } : {}) });
-  trialResult.value = result; trialFingerprint.value = configurationFingerprint.value;
-  serviceViewSummary.value = `试算完成：${result.views.length} 个视图，${result.views.reduce<number>((sum, view) => sum + Number((view as { outputRecordCount?: number }).outputRecordCount ?? 0), 0)} 条输出记录，目录版本 ${result.catalogVersion}`;
+  const rootIds = serviceTrialVersionMode.value === 'draft' && activeTab.value === 'views' && currentView.value && !layout ? [currentView.value.viewId]
+    : template ? [...new Set([...template.viewRefs.map(ref => ref.viewId),
+      ...(template.pageDefinitions ?? []).flatMap(page => page.regions.flatMap(region => [region.viewId, region.appendixIfViewHasRecords].filter((id): id is string => !!id))),
+      ...template.worksheets.flatMap(sheet => (sheet.document.fields ?? []).map(field => field.viewId).filter((id): id is string => !!id)),
+    ])] : undefined;
+  const result = await client.previewViews(serviceProjectId.value, { documentType: serviceDocumentType.value, businessKey: serviceBusinessKey(),
+    ...(serviceTrialVersionMode.value === 'draft' ? { definitions: [...drafts.values()] } : {}), viewIds: rootIds,
+    versionMode: serviceTrialVersionMode.value, offset: typeof offset === 'number' ? offset : 0, limit: 100,
+    ...(template ? { template } : {}),
+    ...(serviceTrialVersionMode.value === 'pinned' ? { templateRef: { id: serviceSelectedTemplateId.value, version: serviceSelectedTemplateVersion.value! } } : {}),
+    pageDefinitionId: pageConfiguration?.pageType === 'main' ? pageConfiguration.pageDefinitionId : pageConfiguration?.continuationOf || undefined });
+  if (!current()) return;
+  trialResult.value = result; trialFingerprint.value = fingerprint;
+  serviceViewSummary.value = `${result.mode === 'pinned' ? '固定发布版本' : '草稿'}试算完成：${result.views.length} 个视图，${result.views.reduce<number>((sum, view) => sum + Number((view as { outputRecordCount?: number }).outputRecordCount ?? 0), 0)} 条输出记录，目录版本 ${result.catalogVersion}`;
   serviceError.value = ''; serviceErrorIssue.value = undefined;
-  } catch (error) { captureServiceError(error); throw error; }
+  } catch (error) { if (current()) { captureServiceError(error); throw error; } }
 }); }
+function dependencyOrder(definitions: DataViewDefinition[]): DataViewDefinition[] {
+  const byId = new Map(definitions.map(definition => [definition.viewId, definition]));
+  const visiting = new Set<string>(), visited = new Set<string>(), ordered: DataViewDefinition[] = [];
+  const visit = (id: string) => {
+    if (visited.has(id)) return;
+    if (visiting.has(id)) throw new Error(`视图依赖存在循环：${id}`);
+    visiting.add(id);
+    for (const child of byId.get(id)?.children ?? []) if (byId.has(child.viewId)) visit(child.viewId);
+    visiting.delete(id); visited.add(id);
+    const definition = byId.get(id); if (definition) ordered.push(definition);
+  };
+  for (const definition of definitions) visit(definition.viewId);
+  return ordered;
+}
+function stableConfig(value: unknown): string {
+  const normalize = (item: unknown): unknown => Array.isArray(item) ? item.map(normalize)
+    : item && typeof item === 'object' ? Object.fromEntries(Object.entries(item as Record<string, unknown>)
+      .sort(([a], [b]) => a.localeCompare(b)).map(([key, child]) => [key, normalize(child)])) : item;
+  return JSON.stringify(normalize(value));
+}
+function sameViewContent(left: DataViewDefinition, right: DataViewDefinition) {
+  const { version: _leftVersion, ...leftContent } = left, { version: _rightVersion, ...rightContent } = right;
+  return stableConfig(leftContent) === stableConfig(rightContent);
+}
+function templateContentKey(template: TemplatePackage): string {
+  // Snapshotting and local edits advance revisions independently of content.
+  const normalized = copy(template);
+  normalized.revision = 0; normalized.status = 'draft';
+  for (const sheet of normalized.worksheets) sheet.document.revision = 0;
+  return stableConfig(normalized);
+}
 function publishServiceViews() { void performAsync(async () => {
   if (store.templatePackage?.projectId !== serviceProjectId.value) throw new Error('当前模板不属于所选项目');
-  const drafts = [...new Map((store.templatePackage?.viewDrafts ?? []).map(view => [view.viewId, view])).values()];
+  const projectId = serviceProjectId.value, epoch = store.loadEpoch, scope = selectionScope(), session = editSession();
+  const content = templateContentKey(store.packageSnapshot());
+  const assertCurrent = () => {
+    if (epoch !== store.loadEpoch || scope !== selectionScope() || content !== templateContentKey(store.packageSnapshot()))
+      throw new Error('编辑内容或模板选择已变化，本次视图发布结果未应用；本地修改已保留，请重新保存后重试');
+  };
+  const drafts = dependencyOrder(copy([...new Map((store.templatePackage?.viewDrafts ?? []).map(view => [view.viewId, view])).values()]));
   if (!drafts.length) throw new Error('当前模板包没有本地视图草稿');
-  const client = reportingClient(), published: string[] = [];
+  const client = reportingClient(), published: string[] = [], publishedRefs: Array<{ viewId: string; version: string }> = [];
   for (const definition of drafts) {
-    let revision = 0;
-    try { revision = (await client.getViewDraft(serviceProjectId.value, definition.viewId)).revision; }
+    assertCurrent();
+    const revision = session.viewRevisions[definition.viewId] ?? 0;
+    let remote: Awaited<ReturnType<ReportingClient['getViewDraft']>> | undefined;
+    try { remote = await client.getViewDraft(projectId, definition.viewId); }
     catch (error) { if ((error as { code?: string }).code !== 'DATA_NOT_FOUND') throw error; }
-    await client.saveViewDraft(serviceProjectId.value, definition, revision);
-    const result = await client.publishView(serviceProjectId.value, definition.viewId);
+    if (remote && remote.revision !== revision && !sameViewContent(remote.value, definition))
+      throw new Error(`视图草稿 ${definition.viewId} 已由其他会话修改；本地内容已保留，请重新载入后合并`);
+    if (!remote && revision !== 0) throw new Error(`视图草稿 ${definition.viewId} 已被删除；本地内容已保留，请重新载入后合并`);
+    const saved = remote && sameViewContent(remote.value, definition)
+      ? remote : await client.saveViewDraft(projectId, definition, remote?.revision ?? revision);
+    assertCurrent();
+    serviceViewDraftRevisions.value = { ...serviceViewDraftRevisions.value, [definition.viewId]: saved.revision };
+    session.viewRevisions[definition.viewId] = saved.revision;
+    serviceObservedViewDraftRevisions.value = { ...serviceObservedViewDraftRevisions.value, [definition.viewId]: saved.revision };
+    const result = await client.publishView(projectId, definition.viewId, undefined, saved.revision);
+    assertCurrent();
+    publishedRefs.push({ viewId: definition.viewId, version: result.version });
     published.push(`${definition.viewId}@${result.version}`);
+    serviceViewSummary.value = `视图发布进度 ${published.length}/${drafts.length}：${published.join('、')}`;
   }
+  assertCurrent(); store.setViewRefs(publishedRefs);
+  await persistServiceTemplateDraft();
   serviceViewSummary.value = `已发布 ${published.length} 个项目视图：${published.join('、')}`;
-  designerMetadata.value = await client.getDesignerMetadata(serviceProjectId.value);
+  if (epoch !== store.loadEpoch || scope !== selectionScope()) return;
+  const metadata = await client.getDesignerMetadata(projectId);
+  if (epoch !== store.loadEpoch || scope !== selectionScope()) return;
+  designerMetadata.value = metadata;
+  await refreshViewDraftRevisions(metadata, projectId);
 }); }
-function saveServiceTemplate() { void performAsync(async () => {
+async function persistServiceTemplateDraft() {
   if (!store.templatePackage) throw new Error('请先导入 Excel 模板或创建模板包');
   if (store.templatePackage.projectId !== 'unassigned' && store.templatePackage.projectId !== serviceProjectId.value) throw new Error('当前模板属于其他项目，请先打开所选项目模板');
+  const projectId = serviceProjectId.value;
+  if (designerMetadata.value?.project.projectId !== projectId) throw new Error('请等待所选项目的数据目录加载完成后保存');
+  if (designerMetadata.value && (store.templatePackage.projectId !== projectId
+    || store.templatePackage.catalogVersion !== designerMetadata.value.catalog.catalogVersion))
+    store.associateProject(projectId, designerMetadata.value.catalog.catalogVersion);
   const template = store.packageSnapshot() as ReportingTemplatePackage;
-  template.projectId = serviceProjectId.value; template.status = 'draft';
-  if (designerMetadata.value) template.catalogVersion = designerMetadata.value.catalog.catalogVersion;
-  const saved = await reportingClient().saveTemplateDraft(serviceProjectId.value, template, serviceDraftRevision.value);
-  if (designerMetadata.value) store.associateProject(serviceProjectId.value, designerMetadata.value.catalog.catalogVersion);
+  template.projectId = projectId; template.status = 'draft';
+  // Capture the editor being saved before awaiting I/O. A list loaded before this
+  // save must not change selection and make its own save response appear stale.
+  serviceSelectionSequence++;
   serviceSelectedTemplateId.value = template.packageId;
-  serviceDraftRevision.value = saved.revision; servicePublishedVersion.value = undefined;
+  const session = editSession(), epoch = store.loadEpoch, scope = selectionScope();
+  const saved = await reportingClient().saveTemplateDraft(projectId, template, session.revision);
+  if (epoch !== store.loadEpoch || scope !== selectionScope() || serviceEditSession.value !== session) return saved;
+  session.revision = saved.revision; session.savedContent = templateContentKey(template);
+  serviceSelectedTemplateId.value = template.packageId;
+  serviceDraftRevision.value = saved.revision; serviceObservedDraftRevision.value = saved.revision; servicePublishedVersion.value = undefined;
+  const appliedScope = selectionScope();
   await refreshServiceTemplateState();
+  if (epoch !== store.loadEpoch || appliedScope !== selectionScope()) return saved;
+  serviceDraftRevision.value = saved.revision; serviceObservedDraftRevision.value = saved.revision;
+  return saved;
+}
+function saveServiceTemplate() { void performAsync(async () => {
+  const epoch = store.loadEpoch;
+  const saved = await persistServiceTemplateDraft();
+  if (epoch !== store.loadEpoch || serviceSelectedTemplateId.value !== saved.value.packageId || serviceProjectId.value !== saved.value.projectId) return;
   serviceError.value = ''; ElMessage.success(`模板草稿已保存，修订号 ${saved.revision}`);
 }); }
 function publishServiceTemplate() { void performAsync(async () => {
   if (!store.templatePackage || store.templatePackage.packageId !== serviceSelectedTemplateId.value)
     throw new Error('发布前请先打开对应模板草稿或已发布版本');
   if (!serviceDraftRevision.value) throw new Error('请先将模板草稿保存到服务端');
-  const record = await reportingClient().publishTemplate(serviceProjectId.value, store.templatePackage!.packageId);
+  if (serviceHasUnsavedChanges.value) throw new Error('模板有未保存修改，请先保存项目模板草稿，再发布当前修订');
+  const scope = selectionScope(), epoch = store.loadEpoch;
+  const record = await reportingClient().publishTemplate(serviceProjectId.value, store.templatePackage!.packageId, editSession().revision);
+  if (scope !== selectionScope() || epoch !== store.loadEpoch) return;
   servicePublishedVersion.value = record.version; serviceError.value = '';
   await refreshServiceTemplateState();
   ElMessage.success(`模板已发布为不可变版本 ${record.version}`);
 }); }
 function saveServiceMatchRule() { void performAsync(async () => {
   if (!servicePublishedVersion.value || !serviceSelectedTemplateId.value) throw new Error('请先选择一个已发布模板');
-  const conditions: unknown = JSON.parse(serviceMatchConditionsText.value || '{}');
-  if (!conditions || typeof conditions !== 'object' || Array.isArray(conditions)
-    || Object.values(conditions as Record<string, unknown>).some(value => typeof value !== 'string'))
-    throw new Error('自动匹配条件必须是“业务参数名：文本值”的 JSON 对象');
+  if (Object.entries(serviceMatchConditions.value).some(([, value]) => !value.trim())) throw new Error('请为每个已勾选的匹配参数填写精确值');
+  const conditions = Object.fromEntries(Object.entries(serviceMatchConditions.value).map(([field, value]) => [field, value.trim()]));
   await reportingClient().setTemplateMatchRule(serviceProjectId.value, serviceSelectedTemplateId.value, servicePublishedVersion.value,
-    { documentType: serviceDocumentType.value, conditions: conditions as Record<string, string>, priority: serviceMatchPriority.value });
+    { documentType: serviceMatchRuleDocumentType.value || serviceDocumentType.value, conditions, priority: serviceMatchPriority.value });
+  serviceMatchConditions.value = conditions; serviceHasMatchRule.value = true; serviceIdempotencyKey.value = '';
   serviceError.value = ''; ElMessage.success(`模板版本 ${servicePublishedVersion.value} 的自动匹配规则已保存`);
+}); }
+function toggleMatchCondition(fieldId: string, enabled: boolean) {
+  const conditions = { ...serviceMatchConditions.value };
+  if (enabled) conditions[fieldId] = serviceBusinessValues.value[fieldId] || '';
+  else delete conditions[fieldId];
+  serviceMatchConditions.value = conditions; serviceMatchInspection.value = undefined;
+}
+function inspectServiceTemplateMatches() { void performAsync(async () => {
+  const scope = matchRequestScope(), sequence = ++serviceMatchSequence;
+  const current = () => sequence === serviceMatchSequence && scope === matchRequestScope();
+  serviceMatchInspection.value = undefined; serviceError.value = ''; serviceErrorIssue.value = undefined;
+  try {
+    const result = await reportingClient().inspectTemplateMatches(serviceProjectId.value, serviceDocumentType.value, serviceBusinessKey());
+    if (current()) serviceMatchInspection.value = result;
+  } catch (error) { if (current()) throw error; }
+}); }
+function removeServiceMatchRule() { void performAsync(async () => {
+  if (!servicePublishedVersion.value || !serviceSelectedTemplateId.value) return;
+  await reportingClient().deleteTemplateMatchRule(serviceProjectId.value, serviceSelectedTemplateId.value, servicePublishedVersion.value);
+  serviceMatchConditions.value = {}; serviceHasMatchRule.value = false; serviceMatchInspection.value = undefined; serviceIdempotencyKey.value = '';
+  ElMessage.success(`已移除版本 ${servicePublishedVersion.value} 的自动匹配规则`);
+}); }
+function copyServiceMatchRule() { void performAsync(async () => {
+  if (!serviceMatchCopyVersion.value || !servicePublishedVersion.value || !serviceSelectedTemplateId.value) throw new Error('请选择可复制的旧版匹配规则');
+  const rule = await reportingClient().getTemplateMatchRule(serviceProjectId.value, serviceSelectedTemplateId.value, serviceMatchCopyVersion.value);
+  await reportingClient().setTemplateMatchRule(serviceProjectId.value, serviceSelectedTemplateId.value, servicePublishedVersion.value, rule);
+  serviceIdempotencyKey.value = '';
+  await loadServiceMatchRule();
+  ElMessage.success(`已将 v${serviceMatchCopyVersion.value} 匹配条件复制到最新版本 v${servicePublishedVersion.value}`);
+}); }
+function setSelectedTemplateDisabled(disabled: boolean) { void performAsync(async () => {
+  if (!serviceSelectedTemplateId.value) return;
+  await reportingClient().setTemplateDisabled(serviceProjectId.value, serviceSelectedTemplateId.value, disabled);
+  serviceIdempotencyKey.value = '';
+  await refreshServiceTemplateState();
+  ElMessage.success(disabled ? '模板已停用' : '模板已恢复使用');
 }); }
 async function loadServicePage(pageNumber: number) {
   if (!serviceGeneration.value) return;
@@ -611,17 +913,20 @@ function generateFromService() { void performAsync(async () => {
   serviceError.value = ''; serviceErrorIssue.value = undefined;
   if (!serviceAutoMatch.value && !store.templatePackage) throw new Error('请先导入并配置模板');
   if (!serviceAutoMatch.value && !servicePublishedVersion.value) throw new Error('请先保存并发布模板');
-  serviceIdempotencyKey.value ||= crypto.randomUUID();
   const request = {
     mode: 'preview' as const, documentType: serviceDocumentType.value, businessKey: serviceBusinessKey(),
     ...(!serviceAutoMatch.value ? { templateRef: { id: serviceSelectedTemplateId.value || store.templatePackage!.packageId,
       version: servicePublishedVersion.value! } } : { autoMatch: true }),
-    idempotencyKey: serviceIdempotencyKey.value,
   } as const;
-  const reply = await reportingClient().generate(serviceProjectId.value, request);
+  const fingerprint = stableConfig(request);
+  if (!serviceIdempotencyKey.value || serviceIdempotencyFingerprint.value !== fingerprint) {
+    serviceIdempotencyKey.value = crypto.randomUUID(); serviceIdempotencyFingerprint.value = fingerprint;
+  }
+  const requestWithKey = { ...request, idempotencyKey: serviceIdempotencyKey.value };
+  const reply = await reportingClient().generate(serviceProjectId.value, requestWithKey);
   serviceGeneration.value = reply; servicePagePlan.value = reply.snapshot.pagePlan as PagePlan;
   serviceError.value = ''; serviceDialog.value = false; servicePreviewDialog.value = true;
-  await loadServicePage(1); serviceIdempotencyKey.value = '';
+  await loadServicePage(1); serviceIdempotencyKey.value = ''; serviceIdempotencyFingerprint.value = '';
 }); }
 function confirmServiceIssue() { void performAsync(async () => {
   const generation = serviceGeneration.value;
@@ -648,6 +953,10 @@ function toggleServiceHistory(event: Event) {
   if ((event.currentTarget as HTMLDetailsElement).open && !serviceHistory.value) searchServiceHistory();
 }
 function historyBusinessKeyLabel(value: Record<string, string>) { return Object.entries(value).map(([key, item]) => `${key}: ${item}`).join(' · '); }
+function historyTemplateMatchLabel(value: NonNullable<GenerationHistoryItem['templateMatch']>) {
+  const facts = Object.entries(value.facts).map(([key, fact]) => `${key}=${fact.value} (${fact.datasetId}.${fact.fieldId})`);
+  return `${facts.length ? facts.join('；') : '业务查询参数'} · 优先级 ${value.rule.priority}`;
+}
 function downloadHistoryGeneration(generationId: string) { void performAsync(async () => {
   const blob = await reportingClient().getFile(serviceProjectId.value, generationId);
   downloadBlob(blob, `${generationId}.xlsx`);
@@ -744,7 +1053,7 @@ const previewTable = computed(() => {
     </aside>
     <main class="canvas-panel">
       <div class="document-bar"><input :value="store.doc.name" aria-label="模板名称" @change="perform(() => store.commit(d => { d.name = ($event.target as HTMLInputElement).value.trim() || '未命名模板'; }))" /><select :value="store.activeWorksheetId" aria-label="当前工作表" @change="perform(() => store.switchWorksheet(($event.target as HTMLSelectElement).value))"><option v-for="sheet in store.worksheets" :key="sheet.worksheetId" :value="sheet.worksheetId">{{ sheet.name }}</option></select><button class="small" @click="perform(() => store.addWorksheet())">＋ 工作表</button><input v-model="sheetNameInput" aria-label="工作表名称" /><button class="small" @click="perform(() => store.renameActiveWorksheet(sheetNameInput))">重命名</button><span>{{ store.doc.rows }} 行 × {{ store.doc.cols }} 列</span><button class="small" @click="loadSample">质保书示例</button></div>
-      <div class="toolbar"><input v-model="addressInput" aria-label="单元格地址" @keydown.enter="goToAddress" /><button class="small" @click="goToAddress">定位</button><i></i><button class="small" :disabled="!store.canUndo" @click="store.undo()">撤销</button><button class="small" :disabled="!store.canRedo" @click="store.redo()">重做</button><i></i><button class="small" @click="editRegion()">＋ 设置明细区域</button><button class="small" @click="exportJson">保存 JSON</button><select v-model.number="zoom" aria-label="画布缩放" @change="syncGrid"><option :value="0.4">40%</option><option :value="0.5">50%</option><option :value="0.75">75%</option><option :value="1">100%</option><option :value="1.25">125%</option></select></div>
+      <div class="toolbar"><input v-model="addressInput" aria-label="单元格地址" @keydown.enter="goToAddress" /><button class="small" @click="goToAddress">定位</button><i></i><button class="small" :disabled="!store.canUndo" @click="perform(() => store.undo())">撤销</button><button class="small" :disabled="!store.canRedo" @click="perform(() => store.redo())">重做</button><i></i><button class="small" @click="editRegion()">＋ 设置明细区域</button><button class="small" @click="exportJson">保存 JSON</button><select v-model.number="zoom" aria-label="画布缩放" @change="syncGrid"><option :value="0.4">40%</option><option :value="0.5">50%</option><option :value="0.75">75%</option><option :value="1">100%</option><option :value="1.25">125%</option></select></div>
       <div v-if="projectionError" class="error-box">{{ projectionError }} <button @click="syncGrid">重试加载画布</button></div>
       <details v-if="store.doc.excelSource?.warnings.length" class="import-notice"><summary>已导入 {{ store.doc.excelSource.fileName }} · 查看导入说明</summary><p v-for="warning in store.doc.excelSource.warnings" :key="warning">{{ warning }}</p></details>
       <div ref="container" class="canvas" @dragover.prevent @drop.prevent />
@@ -786,7 +1095,7 @@ const previewTable = computed(() => {
         <div class="two-cols"><label>纸张<select v-model="pageForm.paperSize"><option value="A4">A4</option><option value="A3">A3</option><option value="Letter">Letter</option><option value="Legal">Legal</option><option value="custom">自定义</option></select></label><label>方向<select v-model="pageForm.orientation"><option value="portrait">纵向</option><option value="landscape">横向</option></select></label></div>
         <div v-if="pageForm.paperSize === 'custom'" class="two-cols"><label>纸张宽度 mm<input v-model.number="pageForm.customWidth" type="number" min="1" /></label><label>纸张高度 mm<input v-model.number="pageForm.customHeight" type="number" min="1" /></label></div>
         <div class="two-cols"><label>上边距 mm<input v-model.number="pageForm.top" type="number" min="0" /></label><label>右边距 mm<input v-model.number="pageForm.right" type="number" min="0" /></label><label>下边距 mm<input v-model.number="pageForm.bottom" type="number" min="0" /></label><label>左边距 mm<input v-model.number="pageForm.left" type="number" min="0" /></label></div>
-        <details><summary>打印范围、重复表头与图片定位</summary><div class="two-cols"><label>起始行（从 1 开始）<input v-model.number="pageForm.printRow" type="number" min="1" /></label><label>起始列（从 1 开始）<input v-model.number="pageForm.printCol" type="number" min="1" /></label><label>打印行数<input v-model.number="pageForm.printRows" type="number" min="1" /></label><label>打印列数<input v-model.number="pageForm.printCols" type="number" min="1" /></label></div><label>重复表头行（逗号分隔，从 1 开始）<input v-model="pageForm.repeatHeaderRows" placeholder="例如 1,2,3" /></label><ImageResources v-model="pageForm.imagePlacementsJson" :template="store.templatePackage" :selection="store.selection" :worksheet-id="store.activeWorksheetId" @resources="resources => perform(() => store.saveResources(resources))" /><small>导入工作簿中的原有图片继续随原工作簿保留。</small></details>
+        <details><summary>打印范围、重复表头与图片定位</summary><div class="two-cols"><label>起始行（从 1 开始）<input v-model.number="pageForm.printRow" type="number" min="1" /></label><label>起始列（从 1 开始）<input v-model.number="pageForm.printCol" type="number" min="1" /></label><label>打印行数<input v-model.number="pageForm.printRows" type="number" min="1" /></label><label>打印列数<input v-model.number="pageForm.printCols" type="number" min="1" /></label></div><label>重复表头行（逗号分隔，从 1 开始）<input v-model="pageForm.repeatHeaderRows" placeholder="例如 1,2,3" /></label><ImageResources v-model="pageForm.imagePlacementsJson" :template="store.templatePackage" :selection="store.selection" :worksheet-id="store.activeWorksheetId" :load-epoch="store.loadEpoch" :commit-resources="commitImageResources" /><small>导入工作簿中的原有图片继续随原工作簿保留。</small></details>
         <h4>当前选区区域</h4><p class="muted">{{ selectedAddress }} · {{ store.selection.rows }} × {{ store.selection.cols }} 格</p>
         <label>区域名称<input v-model="pageForm.regionLabel" /></label><label>区域类型<select v-model="pageForm.regionKind"><option value="fixed">固定内容</option><option value="header">表头</option><option value="footer">页尾 / 签章 / 声明</option><option v-if="pageForm.paginationMode === 'flow'" value="groupHeader">分组头</option><option v-if="pageForm.paginationMode === 'flow'" value="groupFooter">分组尾</option><option value="detail">重复明细</option></select></label>
         <template v-if="['detail', 'groupHeader', 'groupFooter'].includes(pageForm.regionKind)"><label>视图标识<select v-model="pageForm.viewId"><option value="">请选择</option><option v-for="view in availableViews" :key="view.viewId" :value="view.viewId">{{ view.label }} · {{ view.viewId }}</option></select></label><label>联动分页组<el-select v-model="pageForm.paginationGroupId" filterable allow-create aria-label="联动分页组"><el-option v-for="id in [...new Set(pageDefinitions.flatMap(page => page.regions.map(region => region.paginationGroupId).filter(Boolean)))]" :key="id" :value="id" :label="id" /></el-select></label><FieldPicker v-model="pageSelections.groupBy" :fields="pageViewFields" multiple label="业务分组字段" /><div class="two-cols"><label>每条记录行数<input v-model.number="pageForm.recordHeight" type="number" min="1" /></label><label>额外指定容量行数<input v-model.number="pageForm.capacityRows" type="number" min="0" placeholder="0=扣除页尾后自动计算" /></label></div><label>空数据<select v-model="pageForm.emptyPolicy"><option value="keep">保留区域</option><option value="hide">隐藏区域</option></select></label><label>超大组处理<select v-model="pageForm.oversizedGroupPolicy"><option value="error">报错，不拆组</option><option value="split-records">按记录续页</option></select></label><label class="checkbox"><input v-model="pageForm.keepGroupsTogether" type="checkbox" />业务组尽量保持在同一页</label><details><summary>排序、分组合并与重复值设置</summary><OrderEditor v-model="pageForm.orderByJson" :fields="pageViewFields" /><FieldPicker v-model="pageSelections.mergeFieldIds" :fields="pageDictionaryFields" multiple label="组内纵向合并字段" /><FieldPicker v-model="pageSelections.hideRepeatedFieldIds" :fields="pageDictionaryFields" multiple label="重复时仅显示一次的字段" /><FieldPicker v-model="pageSelections.repeatGroupFieldIds" :fields="pageDictionaryFields" multiple label="续页重显业务标识字段" /><label v-if="pageForm.pageType === 'appendix'">附页出现条件视图<select v-model="pageForm.appendixIfViewHasRecords"><option value="">无条件</option><option v-for="view in availableViews" :key="view.viewId" :value="view.viewId">{{ view.label }} · {{ view.viewId }}</option></select></label></details></template>
@@ -810,40 +1119,56 @@ const previewTable = computed(() => {
     <el-dialog v-model="serviceDialog" title="项目数据服务与模板发布" width="820px" :close-on-click-modal="false">
       <p class="muted">本流程使用服务端登记的项目数据源、视图和已发布模板。保存草稿后发布不可变版本，再用明确的业务单号生成。</p>
       <div class="two-cols"><label>服务地址<input v-model="serviceBaseUrl" spellcheck="false" placeholder="/api" /></label><label>访问令牌<input v-model="serviceToken" type="password" autocomplete="off" placeholder="仅部署了令牌验证时填写" /></label></div>
-      <div class="two-cols"><label>项目<select v-model="serviceProjectId" @change="serviceProjectChanged"><option v-for="project in serviceProjects" :key="project.projectId" :value="project.projectId">{{ project.displayName }} · {{ project.projectId }}</option></select></label><label>单据类型<select v-model="serviceDocumentType"><option v-for="type in serviceProjects.find(item => item.projectId === serviceProjectId)?.documentTypes ?? []" :key="type" :value="type">{{ type }}</option></select></label></div>
+      <div class="two-cols"><label>项目<select v-model="serviceProjectId" @change="serviceProjectChanged"><option v-for="project in serviceProjects" :key="project.projectId" :value="project.projectId">{{ project.displayName }} · {{ project.projectId }}</option></select></label><label>单据类型<select v-model="serviceDocumentType" @change="serviceIdempotencyKey = ''; serviceMatchInspection = undefined"><option v-for="type in serviceProjects.find(item => item.projectId === serviceProjectId)?.documentTypes ?? []" :key="type" :value="type">{{ type }}</option></select></label></div>
       <div class="two-cols">
-        <label>项目模板<select v-model="serviceSelectedTemplateId" @change="selectServiceTemplate(serviceSelectedTemplateId)"><option value="">请选择项目模板</option><option v-for="item in serviceTemplates" :key="item.templateId" :value="item.templateId">{{ item.name }} · {{ item.templateId }}{{ item.disabled ? '（已停用，不可生成）' : '' }}</option></select></label>
-        <label>已发布版本<select v-model.number="serviceSelectedTemplateVersion"><option v-for="item in serviceTemplateVersions" :key="item.version" :value="item.version">v{{ item.version }} · {{ item.publishedAt }}</option></select></label>
+        <label>项目模板<select aria-label="项目模板" v-model="serviceSelectedTemplateId" @change="selectServiceTemplate(serviceSelectedTemplateId)"><option value="">请选择项目模板</option><option v-for="item in serviceTemplates" :key="item.templateId" :value="item.templateId">{{ item.name }} · {{ item.templateId }}{{ item.disabled ? '（已停用，不可生成）' : '' }}</option></select></label>
+        <label>已发布版本<select v-model.number="serviceSelectedTemplateVersion" @change="serviceIdempotencyKey = ''"><option v-for="item in serviceTemplateVersions" :key="item.version" :value="item.version">v{{ item.version }} · {{ item.publishedAt }}</option></select></label>
       </div>
-      <div class="button-row"><button :disabled="!serviceSelectedTemplateVersion" @click="openServiceTemplateVersion">打开所选版本</button><button :disabled="!serviceDraftRevision" @click="openServiceTemplateDraft">打开草稿</button><button @click="refreshServiceTemplateState">刷新项目模板</button></div>
+      <div class="button-row"><button :disabled="!serviceSelectedTemplateVersion" @click="openServiceTemplateVersion">打开所选版本</button><button :disabled="!serviceObservedDraftRevision" @click="openServiceTemplateDraft">打开草稿</button><button @click="refreshServiceTemplateState">刷新项目模板</button><button v-if="serviceSelectedTemplateId" :disabled="busy || !servicePublishedVersion" @click="setSelectedTemplateDisabled(!serviceTemplates.find(item => item.templateId === serviceSelectedTemplateId)?.disabled)">{{ serviceTemplates.find(item => item.templateId === serviceSelectedTemplateId)?.disabled ? '恢复模板' : '停用模板' }}</button></div>
       <p v-if="serviceSelectedTemplateId" class="muted">选中：{{ serviceTemplates.find(item => item.templateId === serviceSelectedTemplateId)?.name }} · 草稿修订 {{ serviceDraftRevision || '无' }} · 最新发布 v{{ serviceTemplates.find(item => item.templateId === serviceSelectedTemplateId)?.latestVersion ?? '无' }}。打开旧版本并保存草稿，即可基于该版本继续编辑。</p>
       <h4>质保书查询参数</h4>
       <div v-for="[fieldId, definition] in serviceBusinessFields" :key="fieldId" class="two-cols">
-        <label>{{ definition.label }}{{ definition.required ? ' *' : '' }}<input v-model="serviceBusinessValues[fieldId]" :type="definition.type === 'date' ? 'date' : 'text'" :required="definition.required" :placeholder="fieldId" @input="serviceIdempotencyKey = ''; syncServiceBusinessKeyText()" /></label>
+        <label>{{ definition.label }}{{ definition.required ? ' *' : '' }}<input v-model="serviceBusinessValues[fieldId]" :type="definition.type === 'date' ? 'date' : 'text'" :required="definition.required" :placeholder="fieldId" @input="serviceIdempotencyKey = ''; serviceMatchInspection = undefined; syncServiceBusinessKeyText()" /></label>
         <small class="muted">参数：{{ fieldId }} · {{ definition.type }}{{ definition.required ? ' · 必填' : ' · 可选' }}</small>
       </div>
       <details><summary>高级参数 JSON</summary><p class="muted">通常填写上方表单即可。高级 JSON 只接受当前项目已登记的参数和文本值。</p><textarea v-model="serviceBusinessKeyText" class="json-editor" rows="4" spellcheck="false" /><button @click="applyServiceBusinessKeyJson">应用 JSON 到表单</button></details>
-      <div class="button-row"><button v-if="store.templatePackage?.projectId === 'unassigned'" :disabled="!designerMetadata" @click="associateCurrentProject">将当前模板关联到所选项目</button><button @click="importServiceCatalog">导入项目字段目录</button><button @click="testServiceViews">视图试算</button><button @click="refreshServiceTemplateState">刷新版本状态</button></div>
-      <div class="button-row"><button :disabled="busy || !serviceViewDraftCount" @click="publishServiceViews">发布当前模板包中的 {{ serviceViewDraftCount }} 个视图草稿</button></div>
+      <div class="button-row"><button v-if="store.templatePackage?.projectId === 'unassigned'" :disabled="!designerMetadata" @click="associateCurrentProject">将当前模板关联到所选项目</button><button @click="importServiceCatalog">导入项目字段目录</button><label>试算口径<select v-model="serviceTrialVersionMode"><option value="draft">当前草稿与最新视图</option><option value="pinned">已发布模板锁定版本</option></select></label><button :disabled="busy" @click="testServiceViews">视图试算</button><button @click="refreshServiceTemplateState">刷新版本状态</button></div>
+      <div class="button-row"><button :disabled="busy || !serviceViewDraftCount" @click="publishServiceViews">发布当前模板包中的 {{ serviceViewDraftCount }} 个视图草稿</button><button v-if="serviceViewsRemoteChanged" :disabled="busy" @click="reloadServiceViewDrafts">重新载入服务端视图草稿（丢弃本地视图修改）</button></div>
       <p v-if="serviceViewSummary" class="muted">{{ serviceViewSummary }}</p>
 <ViewTrialResults v-if="trialResult" :result="trialResult" :stale="trialFingerprint !== configurationFingerprint" @page="offset => testServiceViews(offset)" />
       <div class="import-notice"><strong>当前模板</strong><p>{{ store.templatePackage?.name ?? store.doc.name }} · {{ store.templatePackage?.packageId ?? '请先导入或创建模板包' }}</p><p>服务端草稿修订：{{ serviceDraftRevision }} · 已发布版本：{{ servicePublishedVersion ?? '无' }}</p></div>
-      <div class="button-row"><button :disabled="busy || !serviceProjectId || !store.templatePackage" @click="saveServiceTemplate">保存项目模板草稿</button><button :disabled="busy || !serviceDraftRevision || !store.templatePackage" @click="publishServiceTemplate">发布新版本</button></div>
-      <label class="checkbox"><input v-model="serviceAutoMatch" type="checkbox" />按项目中已登记的匹配条件自动选择模板</label>
-      <template v-if="serviceSelectedTemplateId && servicePublishedVersion"><div class="two-cols"><label>自动匹配优先级<input v-model.number="serviceMatchPriority" type="number" min="0" max="1000000" /></label><label>业务条件 JSON<input v-model="serviceMatchConditionsText" spellcheck="false" placeholder='{"customerCode":"CUST-A","productPart":"T"}' /></label></div><button @click="saveServiceMatchRule">登记所选版本的自动匹配条件</button></template>
-      <div class="button-row"><button class="primary" :disabled="!serviceAutoMatch && (!servicePublishedVersion || serviceTemplates.find(item => item.templateId === serviceSelectedTemplateId)?.disabled)" @click="generateFromService">{{ serviceAutoMatch ? '自动匹配并预览' : '读取业务数据并预览' }}</button></div>
+      <div v-if="serviceDraftRemoteChanged || serviceViewsRemoteChanged" class="import-notice"><strong class="error">服务端草稿已变化</strong><p>本地编辑内容已保留。请比较后选择重新载入，或继续保存以触发修订冲突保护。</p><button :disabled="busy || !serviceObservedDraftRevision" @click="openServiceTemplateDraft">丢弃本地改动并载入服务端草稿</button></div>
+      <div class="button-row"><button :disabled="busy || !serviceProjectId || !store.templatePackage || designerMetadata?.project.projectId !== serviceProjectId" @click="saveServiceTemplate">保存项目模板草稿</button><button :disabled="busy || !serviceDraftRevision || !store.templatePackage || serviceHasUnsavedChanges" @click="preflightServiceTemplate">发布预检</button><button :disabled="busy || !serviceDraftRevision || !store.templatePackage || serviceHasUnsavedChanges" @click="publishServiceTemplate">发布新版本</button></div>
+      <p v-if="servicePreflightSummary" class="muted">{{ servicePreflightSummary }}</p>
+      <label class="checkbox"><input v-model="serviceAutoMatch" type="checkbox" @change="serviceIdempotencyKey = ''; serviceMatchInspection = undefined" />按项目中已登记的匹配条件自动选择模板</label>
+      <template v-if="serviceSelectedTemplateId && servicePublishedVersion">
+        <h4>自动匹配条件（业务参数与 MES 采集字段）</h4>
+        <p class="muted">采集字段由项目配置指定，值从同一次 MES 响应中提取；生成请求不能自行覆盖。多行字段值必须一致。</p>
+        <div v-for="[fieldId, definition] in serviceMatchFields" :key="fieldId" class="two-cols">
+          <label class="checkbox"><input type="checkbox" :checked="Object.hasOwn(serviceMatchConditions, fieldId)" @change="toggleMatchCondition(fieldId, ($event.target as HTMLInputElement).checked)" />匹配 {{ definition.label }} · {{ fieldId }} <small>({{ definition.source }})</small></label>
+          <input v-if="Object.hasOwn(serviceMatchConditions, fieldId)" v-model="serviceMatchConditions[fieldId]" :placeholder="serviceBusinessValues[fieldId] || '输入精确匹配值'" @input="serviceMatchInspection = undefined" />
+        </div>
+        <div class="two-cols"><label>匹配单据类型<select v-model="serviceMatchRuleDocumentType"><option v-for="type in serviceProjects.find(item => item.projectId === serviceProjectId)?.documentTypes ?? []" :key="type" :value="type">{{ type }}</option></select></label><label>匹配优先级<input v-model.number="serviceMatchPriority" type="number" min="0" max="1000000" /></label></div>
+        <div class="button-row"><button :disabled="busy || serviceTemplates.find(item => item.templateId === serviceSelectedTemplateId)?.disabled" @click="saveServiceMatchRule">保存当前已发布版本匹配规则</button><button :disabled="busy || !serviceHasMatchRule" @click="removeServiceMatchRule">移除当前版本规则</button><button :disabled="busy" @click="inspectServiceTemplateMatches">试算当前参数的模板命中（可能读取 MES）</button></div>
+        <div v-if="serviceMatchCopyVersion" class="button-row"><span class="muted">新版本的规则不会自动生效。可从旧版复制后检查并保存：</span><select v-model.number="serviceMatchCopyVersion"><option v-for="item in serviceTemplateVersions.filter(item => item.version !== servicePublishedVersion)" :key="item.version" :value="item.version">复制自 v{{ item.version }}</option></select><button :disabled="busy" @click="copyServiceMatchRule">复制到最新版本</button></div>
+        <p v-if="!serviceHasMatchRule" class="muted">当前最新版本尚无匹配规则；自动匹配生成不会命中此模板。</p>
+        <div v-if="serviceMatchInspection" class="history-list"><strong v-if="serviceMatchInspection.winner">命中 {{ serviceMatchInspection.winner.templateId }}@{{ serviceMatchInspection.winner.version }}（优先级 {{ serviceMatchInspection.winner.priority }}）</strong><strong v-else-if="serviceMatchInspection.ambiguous" class="error">多个模板以相同最高优先级命中</strong><strong v-else class="muted">没有模板命中当前参数</strong><div v-if="serviceMatchInspection.matchFacts" class="region-card"><strong>MES 提取的匹配信息</strong><small v-for="(fact, fieldId) in serviceMatchInspection.matchFacts" :key="fieldId">{{ fieldId }} = {{ fact.value }} · {{ fact.datasetId }}.{{ fact.fieldId }} · {{ fact.recordCount }} 条记录</small></div><div v-for="candidate in serviceMatchInspection.candidates" :key="candidate.templateId" class="region-card"><strong>{{ candidate.templateId }}@{{ candidate.version }} · {{ candidate.disabled ? '已停用' : candidate.matches ? `命中，优先级 ${candidate.priority}` : candidate.pendingFields?.length && !candidate.mismatchedFields.length ? '未采集匹配字段' : '条件不匹配' }}</strong><small v-if="candidate.pendingFields?.length">未采集字段：{{ candidate.pendingFields.join('、') }}</small><small v-if="candidate.mismatchedFields.length">不匹配字段：{{ candidate.mismatchedFields.join('、') }}</small></div></div>
+      </template>
+      <div class="button-row"><button class="primary" :disabled="busy || (!serviceAutoMatch && (!servicePublishedVersion || serviceTemplates.find(item => item.templateId === serviceSelectedTemplateId)?.disabled))" @click="generateFromService">{{ serviceAutoMatch ? '自动匹配并预览' : '读取业务数据并预览' }}</button></div>
       <p v-if="serviceError" class="error-box">{{ serviceError }} <button v-if="serviceErrorIssue?.context" class="small" @click="locateServiceIssue(serviceErrorIssue)">定位问题 <small>{{ serviceErrorIssue.context.worksheetId ?? '' }} {{ serviceErrorIssue.context.cell ?? serviceErrorIssue.context.regionId ?? '' }} {{ serviceErrorIssue.context.fieldId ?? '' }} {{ serviceErrorIssue.context.recordId ?? '' }}</small></button></p>
       <details @toggle="toggleServiceHistory"><summary>历史质保书</summary>
         <div class="two-cols"><label>打印号 / 业务参数<input v-model="serviceHistoryQuery" placeholder="输入打印号或业务键值" /></label><label>模板<select v-model="serviceHistoryTemplateId"><option value="">全部模板</option><option v-for="item in serviceTemplates" :key="item.templateId" :value="item.templateId">{{ item.name }}</option></select></label>
           <label>状态<select v-model="serviceHistoryStatus"><option value="all">全部</option><option value="preview">预览</option><option value="issue">已签发</option></select></label><label>开始日期<input v-model="serviceHistoryFrom" type="date" /></label><label>结束日期<input v-model="serviceHistoryTo" type="date" /></label></div>
         <button @click="searchServiceHistory">查询</button>
-        <div v-if="serviceHistory" class="history-list"><div v-for="item in serviceHistory.items" :key="item.generationId" class="region-card"><strong>{{ historyBusinessKeyLabel(item.businessKey) }} · {{ item.status === 'issue' ? '已签发' : '预览' }}</strong><small>{{ item.templateRef.packageId }}@{{ item.templateRef.revision }} · {{ item.pageCount }} 页 · {{ item.createdAt }}</small><small>生成记录 {{ item.generationId }}</small><small v-if="item.signoff">签发于 {{ item.signoff.signedAt }} · 操作者 {{ item.signoff.actorId }}</small><div class="button-row"><button class="small" @click="openHistoryGeneration(item.generationId)">打开预览</button><button class="small" @click="downloadHistoryGeneration(item.generationId)">下载 XLSX</button></div></div><p v-if="!serviceHistory.items.length" class="muted">没有符合条件的记录。</p>
+        <div v-if="serviceHistory" class="history-list"><div v-for="item in serviceHistory.items" :key="item.generationId" class="region-card"><strong>{{ historyBusinessKeyLabel(item.businessKey) }} · {{ item.status === 'issue' ? '已签发' : '预览' }}</strong><small>{{ item.templateRef.packageId }}@{{ item.templateRef.revision }} · {{ item.pageCount }} 页 · {{ item.createdAt }}</small><small v-if="item.templateMatch">自动匹配依据：{{ historyTemplateMatchLabel(item.templateMatch) }}</small><small v-else>模板匹配依据：未记录</small><small>生成记录 {{ item.generationId }}</small><small v-if="item.signoff">签发于 {{ item.signoff.signedAt }} · 操作者 {{ item.signoff.actorId }}</small><div class="button-row"><button class="small" @click="openHistoryGeneration(item.generationId)">打开预览</button><button class="small" @click="downloadHistoryGeneration(item.generationId)">下载 XLSX</button></div></div><p v-if="!serviceHistory.items.length" class="muted">没有符合条件的记录。</p>
           <div class="button-row"><button :disabled="serviceHistory.page <= 1" @click="searchServiceHistoryPage(serviceHistory.page - 1)">上一页</button><span>{{ serviceHistory.page }} / {{ Math.max(1, Math.ceil(serviceHistory.total / serviceHistory.pageSize)) }} · {{ serviceHistory.total }} 条</span><button :disabled="serviceHistory.page * serviceHistory.pageSize >= serviceHistory.total" @click="searchServiceHistoryPage(serviceHistory.page + 1)">下一页</button></div></div>
       </details>
       <template #footer><button @click="serviceDialog = false">关闭</button></template>
     </el-dialog>
     <el-dialog v-model="servicePreviewDialog" title="固定快照的逐页预览" width="94%" top="3vh">
       <p v-if="serviceGeneration" class="muted">生成记录 {{ serviceGeneration.generationId }} · 模板 {{ serviceGenerationTemplateLabel }} · {{ serviceGeneration.mode === 'issue' ? '正式生成' : '预览' }} · {{ serviceGeneration.pageCount }} 页 · 下载与本预览使用同一份页面计划。</p>
+      <p v-if="serviceGeneration?.snapshot?.templateMatch" class="muted">自动匹配依据：{{ Object.entries(serviceGeneration.snapshot.templateMatch.facts).map(([id, fact]) => `${id}=${fact.value}（${fact.datasetId}.${fact.fieldId}）`).join('；') || '业务查询参数' }} · 规则优先级 {{ serviceGeneration.snapshot.templateMatch.rule.priority }} · {{ JSON.stringify(serviceGeneration.snapshot.templateMatch.rule.conditions) }}</p>
+      <p v-else class="muted">模板匹配依据：未记录</p>
       <PagedPreview :page-number="servicePageNumber" :total-pages="serviceGeneration?.pageCount ?? 0" :sheets="servicePageSheets" :resources="servicePageResources" :diagnostics="servicePageDiagnostics" :loading="servicePageLoading" @navigate="loadServicePage" @locate="locateServiceIssue" />
       <p v-if="serviceError" class="error-box">{{ serviceError }} <button v-if="serviceErrorIssue?.context" class="small" @click="locateServiceIssue(serviceErrorIssue)">定位问题 <small>{{ serviceErrorIssue.context.worksheetId ?? '' }} {{ serviceErrorIssue.context.cell ?? serviceErrorIssue.context.regionId ?? '' }} {{ serviceErrorIssue.context.fieldId ?? '' }} {{ serviceErrorIssue.context.recordId ?? '' }}</small></button></p>
       <template #footer><button @click="servicePreviewDialog = false">关闭</button><button v-if="serviceGeneration?.mode === 'preview' && !serviceGeneration.signoff" class="primary" :disabled="busy || !serviceGeneration" @click="confirmServiceIssue">确认签发</button><span v-else-if="serviceGeneration?.signoff" class="muted">已由 {{ serviceGeneration.signoff.actorId }} 于 {{ serviceGeneration.signoff.signedAt }} 签发</span><button @click="reprintServiceGeneration">按原快照重印</button><button v-if="serviceGeneration?.pdfUrl" :disabled="busy" @click="downloadServicePdf">下载 PDF</button><button class="primary" :disabled="busy || !serviceGeneration" @click="downloadServiceGeneration">下载 XLSX</button></template>

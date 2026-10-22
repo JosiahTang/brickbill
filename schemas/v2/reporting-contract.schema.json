@@ -21,9 +21,118 @@
       "properties": { "datasetId": { "$ref": "#/definitions/id" }, "label": { "type": "string", "minLength": 1 }, "grain": { "type": "string", "minLength": 1 }, "required": { "type": "boolean" }, "primaryKey": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "$ref": "#/definitions/id" } }, "fields": { "type": "array", "minItems": 1, "items": { "$ref": "#/definitions/dataField" } } }
     },
     "project": {
-      "type": "object", "additionalProperties": false,
-      "required": ["contractVersion", "projectId", "displayName", "projectVersion", "adapterId", "adapterVersion", "documentTypes", "businessKey", "datasets", "relationships"],
-      "properties": { "contractVersion": { "const": 2 }, "projectId": { "$ref": "#/definitions/id" }, "displayName": { "type": "string", "minLength": 1 }, "projectVersion": { "$ref": "#/definitions/version" }, "adapterId": { "$ref": "#/definitions/id" }, "adapterVersion": { "$ref": "#/definitions/version" }, "documentTypes": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "$ref": "#/definitions/id" } }, "businessKey": { "type": "object", "minProperties": 1, "propertyNames": { "$ref": "#/definitions/id" }, "additionalProperties": { "type": "object", "additionalProperties": false, "required": ["label", "type", "required"], "properties": { "label": { "type": "string", "minLength": 1 }, "type": { "$ref": "#/definitions/valueType" }, "required": { "type": "boolean" } } } }, "datasets": { "type": "array", "minItems": 1, "items": { "$ref": "#/definitions/datasetDefinition" } }, "relationships": { "type": "array", "items": { "$ref": "#/definitions/relationship" } } }
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "contractVersion",
+        "projectId",
+        "displayName",
+        "projectVersion",
+        "adapterId",
+        "adapterVersion",
+        "documentTypes",
+        "businessKey",
+        "datasets",
+        "relationships"
+      ],
+      "properties": {
+        "contractVersion": {
+          "const": 2
+        },
+        "projectId": {
+          "$ref": "#/definitions/id"
+        },
+        "displayName": {
+          "type": "string",
+          "minLength": 1
+        },
+        "projectVersion": {
+          "$ref": "#/definitions/version"
+        },
+        "adapterId": {
+          "$ref": "#/definitions/id"
+        },
+        "adapterVersion": {
+          "$ref": "#/definitions/version"
+        },
+        "documentTypes": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/definitions/id"
+          }
+        },
+        "businessKey": {
+          "type": "object",
+          "minProperties": 1,
+          "propertyNames": {
+            "$ref": "#/definitions/id"
+          },
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "label",
+              "type",
+              "required"
+            ],
+            "properties": {
+              "label": {
+                "type": "string",
+                "minLength": 1
+              },
+              "type": {
+                "$ref": "#/definitions/valueType"
+              },
+              "required": {
+                "type": "boolean"
+              }
+            }
+          }
+        },
+        "datasets": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/definitions/datasetDefinition"
+          }
+        },
+        "relationships": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/relationship"
+          }
+        },
+        "templateMatchFields": {
+          "type": "object",
+          "propertyNames": {
+            "$ref": "#/definitions/id"
+          },
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "label",
+              "datasetId",
+              "fieldId"
+            ],
+            "properties": {
+              "label": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 120
+              },
+              "datasetId": {
+                "$ref": "#/definitions/id"
+              },
+              "fieldId": {
+                "$ref": "#/definitions/id"
+              }
+            }
+          }
+        }
+      }
     },
     "relationship": {
       "type": "object", "additionalProperties": false,
@@ -134,9 +243,187 @@
     "pagePlan": { "type": "object", "additionalProperties": false, "required": ["contractVersion", "templateId", "templateVersion", "pages", "totalPages", "groupCount"], "properties": { "contractVersion": { "const": 2 }, "templateId": { "$ref": "#/definitions/id" }, "templateVersion": { "type": "integer", "minimum": 0 }, "pages": { "type": "array", "minItems": 1, "items": { "$ref": "#/definitions/pageEntry" } }, "totalPages": { "type": "integer", "minimum": 1 }, "groupCount": { "type": "integer", "minimum": 0 } } },
     "reportingError": { "type": "object", "additionalProperties": false, "required": ["code", "message", "stage"], "properties": { "code": { "enum": ["CONTRACT_INVALID", "CONTRACT_VERSION_UNSUPPORTED", "DATA_NOT_FOUND", "AMBIGUOUS_SCOPE", "DUPLICATE_KEY", "RELATION_CARDINALITY_ERROR", "FIELD_NOT_FOUND", "VALUE_TYPE_ERROR", "VIEW_INVALID", "RULE_VERSION_NOT_FOUND", "GROUP_TOO_LARGE", "LAYOUT_OVERFLOW", "PAGE_PLAN_NOT_CONVERGED", "TEMPLATE_MATCH_AMBIGUOUS", "REVISION_CONFLICT", "UNSUPPORTED_FORMULA_LAYOUT", "SOURCE_TIMEOUT", "SOURCE_UNAVAILABLE", "SOURCE_RESPONSE_INVALID", "RESOURCE_LIMIT_EXCEEDED"] }, "message": { "type": "string", "minLength": 1 }, "stage": { "enum": ["contract", "collect", "catalog", "view", "rule", "layout", "render", "export", "repository"] }, "context": { "type": "object", "additionalProperties": true }, "retryable": { "type": "boolean" } } },
     "generationSnapshot": {
-      "type": "object", "additionalProperties": false,
-      "required": ["contractVersion", "generationId", "projectId", "businessKey", "templateRef", "catalogVersion", "viewRefs", "functionRefs", "collectedAt", "sourceVersion", "data", "viewResults"],
-      "properties": { "contractVersion": { "const": 2 }, "generationId": { "$ref": "#/definitions/id" }, "projectId": { "$ref": "#/definitions/id" }, "businessKey": { "$ref": "#/definitions/stringMap" }, "templateRef": { "type": "object", "additionalProperties": false, "required": ["packageId", "revision"], "properties": { "packageId": { "$ref": "#/definitions/id" }, "revision": { "type": "integer", "minimum": 0 } } }, "catalogVersion": { "$ref": "#/definitions/version" }, "viewRefs": { "type": "array", "items": { "$ref": "#/definitions/versionRefView" } }, "functionRefs": { "type": "array", "items": { "$ref": "#/definitions/versionRefFunction" } }, "collectedAt": { "type": "string", "format": "date-time" }, "sourceVersion": { "$ref": "#/definitions/version" }, "data": { "$ref": "#/definitions/datasetBundle" }, "viewResults": { "type": "array", "items": { "type": "object", "minProperties": 1 } }, "pagePlan": { "$ref": "#/definitions/pagePlan" }, "output": { "type": "object", "additionalProperties": false, "required": ["fileName", "mediaType", "sha256", "byteLength"], "properties": { "fileName": { "type": "string", "minLength": 1 }, "mediaType": { "type": "string", "minLength": 1 }, "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" }, "byteLength": { "type": "integer", "minimum": 0 } } } }
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "contractVersion",
+        "generationId",
+        "projectId",
+        "businessKey",
+        "templateRef",
+        "catalogVersion",
+        "viewRefs",
+        "functionRefs",
+        "collectedAt",
+        "sourceVersion",
+        "data",
+        "viewResults"
+      ],
+      "properties": {
+        "contractVersion": {
+          "const": 2
+        },
+        "generationId": {
+          "$ref": "#/definitions/id"
+        },
+        "projectId": {
+          "$ref": "#/definitions/id"
+        },
+        "businessKey": {
+          "$ref": "#/definitions/stringMap"
+        },
+        "templateRef": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "packageId",
+            "revision"
+          ],
+          "properties": {
+            "packageId": {
+              "$ref": "#/definitions/id"
+            },
+            "revision": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        },
+        "catalogVersion": {
+          "$ref": "#/definitions/version"
+        },
+        "viewRefs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/versionRefView"
+          }
+        },
+        "functionRefs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/versionRefFunction"
+          }
+        },
+        "collectedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "sourceVersion": {
+          "$ref": "#/definitions/version"
+        },
+        "data": {
+          "$ref": "#/definitions/datasetBundle"
+        },
+        "viewResults": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "minProperties": 1
+          }
+        },
+        "pagePlan": {
+          "$ref": "#/definitions/pagePlan"
+        },
+        "output": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "fileName",
+            "mediaType",
+            "sha256",
+            "byteLength"
+          ],
+          "properties": {
+            "fileName": {
+              "type": "string",
+              "minLength": 1
+            },
+            "mediaType": {
+              "type": "string",
+              "minLength": 1
+            },
+            "sha256": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}$"
+            },
+            "byteLength": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        },
+        "templateMatch": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "documentType",
+            "facts",
+            "rule"
+          ],
+          "properties": {
+            "documentType": {
+              "$ref": "#/definitions/id"
+            },
+            "facts": {
+              "type": "object",
+              "propertyNames": {
+                "$ref": "#/definitions/id"
+              },
+              "additionalProperties": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "value",
+                  "datasetId",
+                  "fieldId",
+                  "recordCount"
+                ],
+                "properties": {
+                  "value": {
+                    "type": "string",
+                    "maxLength": 200
+                  },
+                  "datasetId": {
+                    "$ref": "#/definitions/id"
+                  },
+                  "fieldId": {
+                    "$ref": "#/definitions/id"
+                  },
+                  "recordCount": {
+                    "type": "integer",
+                    "minimum": 1
+                  }
+                }
+              }
+            },
+            "rule": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "conditions",
+                "priority"
+              ],
+              "properties": {
+                "conditions": {
+                  "type": "object",
+                  "propertyNames": {
+                    "$ref": "#/definitions/id"
+                  },
+                  "additionalProperties": {
+                    "type": "string",
+                    "maxLength": 200
+                  }
+                },
+                "priority": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 1000000
+                }
+              }
+            }
+          }
+        }
+      }
     }
   }
 }

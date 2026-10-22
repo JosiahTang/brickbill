@@ -1,28 +1,41 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue';
+import { computed, onBeforeUnmount, ref, watch } from 'vue';
 import type { TemplateImagePlacement, TemplatePackage } from '../../core/contracts/types.ts';
 import type { Rect } from '../../domain/model.ts';
-const props = defineProps<{ modelValue: string; template: TemplatePackage | null; selection: Rect; worksheetId: string }>();
-const emit = defineEmits<{ 'update:modelValue': [value: string]; resources: [value: NonNullable<TemplatePackage['resources']>] }>();
+type Resources = NonNullable<TemplatePackage['resources']>;
+const props = defineProps<{ modelValue: string; template: TemplatePackage | null; selection: Rect; worksheetId: string; loadEpoch: number;
+  commitResources: (update: (current: Resources) => Resources, epoch: number) => boolean }>();
+const emit = defineEmits<{ 'update:modelValue': [value: string] }>();
 const resourceId = ref(''), repeatOn = ref<'all' | 'first' | 'last'>('all'), error = ref('');
 const placements = computed<TemplateImagePlacement[]>(() => { try { const value = JSON.parse(props.modelValue); return Array.isArray(value) ? value : []; } catch { return []; } });
 const resources = computed(() => props.template?.resources ?? []);
+let disposed = false, uploadSequence = 0;
+watch(() => `${props.loadEpoch}:${props.template?.packageId ?? ''}`, () => { uploadSequence++; resourceId.value = ''; error.value = ''; }, { flush: 'sync' });
+onBeforeUnmount(() => { disposed = true; });
+function chooseResource(id: string) { uploadSequence++; resourceId.value = id; error.value = ''; }
 function act(run: () => void) { try { run(); error.value = ''; } catch (e) { error.value = e instanceof Error ? e.message : String(e); } }
 async function upload(event: Event) {
   const input = event.target as HTMLInputElement, file = input.files?.[0]; input.value = ''; if (!file) return;
+  const epoch = props.loadEpoch, packageId = props.template?.packageId, sequence = ++uploadSequence;
+  const current = () => !disposed && epoch === props.loadEpoch && packageId === props.template?.packageId;
   try {
     if (!['image/png','image/jpeg'].includes(file.type) || file.size < 1 || file.size > 5 * 1024 * 1024) throw new Error('请选择 5 MiB 以内的 PNG 或 JPEG 图片');
     const bitmap = await createImageBitmap(file); bitmap.close();
+    if (!current()) return;
     const bytes = new Uint8Array(await file.arrayBuffer());
+    if (!current()) return;
     let binary = ''; for (const byte of bytes) binary += String.fromCharCode(byte);
-    const base64 = btoa(binary), existing = resources.value.find(item => item.mediaType === file.type && item.base64 === base64);
-    if (existing) resourceId.value = existing.resourceId;
-    else {
+    const base64 = btoa(binary); let acceptedId = '';
+    // Read the authoritative list at commit time, including another upload completed this tick.
+    const accepted = props.commitResources(currentResources => {
+      const existing = currentResources.find(item => item.mediaType === file.type && item.base64 === base64);
+      if (existing) { acceptedId = existing.resourceId; return currentResources; }
       const next = { resourceId: `image.${crypto.randomUUID().replaceAll('-','')}`, mediaType: file.type, base64 };
-      emit('resources', [...resources.value, next]); resourceId.value = next.resourceId;
-    }
-    error.value = '';
-  } catch (e) { error.value = e instanceof Error ? e.message : String(e); }
+      acceptedId = next.resourceId; return [...currentResources, next];
+    }, epoch);
+    if (!accepted) return;
+    if (current() && sequence === uploadSequence) { resourceId.value = acceptedId; error.value = ''; }
+  } catch (e) { if (current() && sequence === uploadSequence) error.value = e instanceof Error ? e.message : String(e); }
 }
 function place() { act(() => {
   if (!resources.value.some(item => item.resourceId === resourceId.value)) throw new Error('请上传或选择图片资源');
@@ -33,16 +46,18 @@ function place() { act(() => {
 function removePlacement(index: number) { act(() => { const saved = JSON.parse(props.modelValue) as TemplateImagePlacement[]; saved.splice(index, 1); emit('update:modelValue', JSON.stringify(saved, null, 2)); }); }
 function removeResource(id: string) { act(() => {
   const referenced = [...(props.template?.pageDefinitions ?? [])].filter(page => page.imagePlacements?.some(item => item.resourceId === id));
+  if (props.template?.worksheets.some(sheet => sheet.document.images?.some(image => image.resourceId === id)))
+    throw new Error('图片仍被工作表引用，不能删除原始图片资源');
   if (placements.value.some(item => item.resourceId === id) || referenced.length) throw new Error(`图片仍被引用，请先删除定位并保存页面。引用页面：${referenced.map(page => page.label).join('、') || '当前编辑页面'}`);
-  emit('resources', resources.value.filter(item => item.resourceId !== id));
+  props.commitResources(currentResources => currentResources.filter(item => item.resourceId !== id), props.loadEpoch);
   if (resourceId.value === id) resourceId.value = '';
 }); }
 </script>
 <template>
   <section class="image-resources">
     <h4>模板图片资源</h4><label>上传图片<input type="file" accept="image/png,image/jpeg" @change="upload" /></label>
-    <div v-for="resource in resources" :key="resource.resourceId" class="region-card"><img :src="`data:${resource.mediaType};base64,${resource.base64}`" alt="模板图片缩略图" style="max-width:100px;max-height:70px" /><small>{{ resource.resourceId }}</small><div class="button-row"><button @click="resourceId = resource.resourceId">选用此图片</button><button @click="removeResource(resource.resourceId)">删除资源</button></div></div>
-    <label>定位图片<select v-model="resourceId"><option value="">请选择</option><option v-for="resource in resources" :key="resource.resourceId" :value="resource.resourceId">{{ resource.resourceId }}</option></select></label>
+    <div v-for="resource in resources" :key="resource.resourceId" class="region-card"><img :src="`data:${resource.mediaType};base64,${resource.base64}`" alt="模板图片缩略图" style="max-width:100px;max-height:70px" /><small>{{ resource.resourceId }}</small><div class="button-row"><button @click="chooseResource(resource.resourceId)">选用此图片</button><button @click="removeResource(resource.resourceId)">删除资源</button></div></div>
+    <label>定位图片<select v-model="resourceId" @change="chooseResource(resourceId)"><option value="">请选择</option><option v-for="resource in resources" :key="resource.resourceId" :value="resource.resourceId">{{ resource.resourceId }}</option></select></label>
     <label>图片显示页<select v-model="repeatOn"><option value="all">每页</option><option value="first">首页</option><option value="last">末页</option></select></label>
     <small>选区：第 {{ selection.r + 1 }} 行、第 {{ selection.c + 1 }} 列，{{ selection.rows }} 行 × {{ selection.cols }} 列。定位后保存页面区域。</small>
     <button @click="place">将图片定位到当前选区</button>

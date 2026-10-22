@@ -199,7 +199,8 @@ export function planFixedPages(template: TemplatePackage, mainPageDefinitionId: 
       const blankRows: Record<string, number> = {};
       for (const region of sequence.regions) {
         const pageRegion = actualDefinition.regions.find(item => item.regionId === region.region.regionId) ?? region.region;
-        const capacityRows = remainingCapacity(pageRegion, actualDefinition, pageNumber, pageEntries.length + sequence.pages.length, options, template);
+        const capacityRows = remainingCapacity(pageRegion, actualDefinition, pageNumber, pageEntries.length + sequence.pages.length, options, template)
+          * (pageRegion.recordHeight ?? pageRegion.rect.rows);
         const used = (sequencePage.records.get(region.region.regionId)?.length ?? 0) * (pageRegion.recordHeight ?? pageRegion.rect.rows);
         blankRows[region.region.regionId] = Math.max(0, capacityRows - used);
       }

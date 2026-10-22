@@ -7,6 +7,7 @@ import { ReportingError } from '../../src/core/contracts/errors.ts';
 import type { TemplatePackage } from '../../src/core/contracts/types.ts';
 import type { ProjectedDocumentPages } from '../../src/core/render/page.ts';
 import { base64ToBytes, loadExcel } from '../../src/export/importExcel.ts';
+import { waitForChildClose } from '../../scripts/compose-smoke-process.mjs';
 
 export const PDF_MIME = 'application/pdf';
 const RENDERER_VERSION = '4.4.9';
@@ -59,6 +60,7 @@ async function sourceImages(template: TemplatePackage): Promise<Record<string, A
   const workbook = await loadExcel(base64ToBytes(template.sourceWorkbook.base64));
   const result: Record<string, Array<{ imageId: string; rect: { r: number; c: number; rows: number; cols: number }; base64: string }>> = {};
   for (const worksheet of template.worksheets) {
+    if (worksheet.document.images !== undefined) continue; // Native images now travel through the shared page projection.
     const sourceName = worksheet.document.excelSource?.sheetName ?? worksheet.name;
     const sheet = workbook.getWorksheet(sourceName);
     if (!sheet) continue;
@@ -76,30 +78,27 @@ async function sourceImages(template: TemplatePackage): Promise<Record<string, A
   return result;
 }
 
-function runRenderer(python: string, input: string, output: string, timeoutMs: number): Promise<{ stdout: string; stderr: string }> {
+export function runRenderer(python: string, input: string, output: string, timeoutMs: number,
+  spawnChild: typeof spawn = spawn, killGraceMs = 5_000): Promise<{ stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
-    const child = spawn(python, [RENDER_SCRIPT, input, output], { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'],
+    const child = spawnChild(python, [RENDER_SCRIPT, input, output], { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'],
       env: { ...process.env, PYTHONDONTWRITEBYTECODE: '1', PYTHONNOUSERSITE: '1', PYTHONIOENCODING: 'utf-8' } });
-    let stdout = '', stderr = '', finished = false;
-    const timer = setTimeout(() => { child.kill(); }, timeoutMs);
+    let stdout = '', stderr = '';
     child.stdout.setEncoding('utf8'); child.stderr.setEncoding('utf8');
     child.stdout.on('data', chunk => { stdout = (stdout + chunk).slice(-64_000); });
     child.stderr.on('data', chunk => { stderr = (stderr + chunk).slice(-64_000); });
-    child.on('error', error => { if (!finished) { finished = true; clearTimeout(timer); reject(error); } });
-    child.on('close', code => {
-      if (finished) return;
-      finished = true; clearTimeout(timer);
-      if (code === 0) resolve({ stdout, stderr });
-      else {
+    const rejectRenderer = (code: number | null, waitError?: Error) => {
         const line = stderr.trim().split(/\r?\n/).at(-1);
         let parsed: { code?: string; message?: string; context?: Record<string, unknown> } | undefined;
         try { parsed = line ? JSON.parse(line) : undefined; } catch { /* keep a safe summary below */ }
         reject(new ReportingError({ code: parsed?.code === 'LAYOUT_OVERFLOW' ? 'LAYOUT_OVERFLOW'
           : parsed?.code === 'FIELD_NOT_FOUND' ? 'FIELD_NOT_FOUND' : 'CONTRACT_INVALID', stage: 'export',
-          message: parsed?.message ?? `PDF 渲染进程失败或超时（退出码 ${code ?? 'unknown'}）`,
+          message: parsed?.message ?? waitError?.message ?? `PDF 渲染进程失败或超时（退出码 ${code ?? 'unknown'}）`,
           context: { ...parsed?.context, exitCode: code, renderer: 'ReportLab' } }));
-      }
-    });
+    };
+    waitForChildClose(child, { timeoutMs, label: 'PDF 渲染进程', killGraceMs })
+      .then(code => code === 0 ? resolve({ stdout, stderr }) : rejectRenderer(code))
+      .catch(error => rejectRenderer(null, error instanceof Error ? error : new Error(String(error))));
   });
 }
 

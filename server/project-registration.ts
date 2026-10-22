@@ -1,6 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import type { DataViewDefinition, ProjectDefinition, ProjectAdapterDefinition } from '../src/core/contracts/types.ts';
-import { validateContract } from '../src/core/contracts/validate.ts';
+import { validateContract, validateProjectSemantics } from '../src/core/contracts/validate.ts';
 import { buildFieldCatalog, validateCatalogAgainstProject } from '../src/core/catalog/catalog.ts';
 import { HttpProjectAdapter } from '../src/core/adapters/project-adapter.ts';
 import { createQualityFunctionRegistry } from '../src/core/functions/hardness.ts';
@@ -30,6 +30,7 @@ export async function loadProjectRegistrations(fileName: string, options: { requ
   for (const item of source) {
     const registration = item;
     validateContract<ProjectDefinition>('project', registration.project);
+    validateProjectSemantics(registration.project);
     validateContract<ProjectAdapterDefinition>('projectAdapter', registration.adapter);
     if (!Array.isArray(registration.views) || !registration.source?.endpoint)
       throw new Error(`Incomplete project registration: ${registration.project.projectId}`);

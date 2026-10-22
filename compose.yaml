@@ -1,5 +1,6 @@
 services:
   reporting-api:
+    image: ${BRICKBILL_API_IMAGE:-brickbill-reporting-api:local}
     build:
       context: .
       target: api
@@ -17,6 +18,7 @@ services:
     restart: unless-stopped
 
   report-designer:
+    image: ${BRICKBILL_WEB_IMAGE:-brickbill-report-designer:local}
     build:
       context: .
       target: web
@@ -24,7 +26,7 @@ services:
       reporting-api:
         condition: service_healthy
     ports:
-      - "${BRICKBILL_BIND:-127.0.0.1}:${BRICKBILL_PORT:-8080}:80"
+      - "${BRICKBILL_BIND:-127.0.0.1}:${BRICKBILL_PORT-8080}:80"
     restart: unless-stopped
 
 volumes:

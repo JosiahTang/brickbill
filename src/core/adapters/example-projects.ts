@@ -99,6 +99,9 @@ export function createQualityProjectDefinition(
   return {
     contractVersion: 2, projectId, displayName, projectVersion: '1.0.0', adapterId, adapterVersion: '1.0.0',
     documentTypes: ['qualityCertificate'], businessKey, datasets,
+    templateMatchFields: {
+      customer: { label: '收货客户', datasetId: 'certificate.header', fieldId: 'cert.customer' },
+    },
     relationships: [
       rel('header-contract', 'contract.info', ['cert.saleOrderSubNo'], ['contract.saleOrderSubNo'], 'one-to-one'),
       rel('header-materials', 'material.lines', ['cert.printNo', 'cert.partFlag'], ['material.printNo', 'material.partFlag']),

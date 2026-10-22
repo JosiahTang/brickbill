@@ -23,6 +23,7 @@ ENV NODE_ENV=production REPORTING_MODE=production REPORTING_HOST=0.0.0.0 \
 COPY --from=web-build /usr/local/bin/node /usr/local/bin/node
 COPY --from=api-deps /app/node_modules ./node_modules
 COPY package*.json ./
+COPY scripts/compose-smoke-process.mjs ./scripts/compose-smoke-process.mjs
 COPY server ./server
 COPY src ./src
 COPY schemas ./schemas

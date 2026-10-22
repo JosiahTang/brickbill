@@ -5,6 +5,7 @@ import type { ProjectedSheetPage } from '../core/render/page.ts';
 export interface ReportingProject {
   projectId: string; displayName: string; documentTypes: string[];
   businessKey: Record<string, { label: string; type: string; required: boolean }>;
+  templateMatchFields?: Record<string, { label: string; datasetId: string; fieldId: string }>;
   projectVersion: string;
 }
 export interface ReportingTemplateSummary {
@@ -12,6 +13,7 @@ export interface ReportingTemplateSummary {
 }
 export interface GenerationHistoryItem {
   generationId: string; documentType: string; businessKey: Record<string, string>; templateRef: { packageId: string; revision: number };
+  templateMatch?: NonNullable<GenerationReply['snapshot']['templateMatch']>;
   status: 'preview' | 'issue'; createdAt: string; pageCount: number; output?: { fileName: string; sha256: string; byteLength: number };
   signoff?: { actorId: string; signedAt: string };
 }
@@ -26,11 +28,14 @@ export class ReportingApiError extends Error {
 export interface GenerationReply {
   generationId: string; projectId: string; mode: 'preview' | 'issue'; status: string; pageCount: number;
   signoff?: { actorId: string; signedAt: string };
-  fileUrl: string; pdfUrl?: string; snapshot: { pagePlan: unknown; [key: string]: unknown };
+  fileUrl: string; pdfUrl?: string; snapshot: { pagePlan: unknown; templateMatch?: {
+    documentType: string; facts: Record<string, { value: string; datasetId: string; fieldId: string; recordCount: number }>;
+    rule: { conditions: Record<string, string>; priority: number };
+  }; [key: string]: unknown };
 }
 export interface GenerationPageReply { pageNumber: number; totalPages: number; diagnostics: unknown[]; sheets: ProjectedSheetPage[]; resources: NonNullable<TemplatePackage['resources']> }
 export interface ViewPreviewReply {
-  catalogVersion: string; mode: 'draft' | 'published'; offset: number; limit: number;
+  catalogVersion: string; mode: 'draft' | 'published' | 'pinned'; offset: number; limit: number;
   definitions: Array<{ viewId: string; version: string; source: string }>;
   views: Array<DataViewResult & { truncated: boolean; childrenLimitedTo: number; childrenTruncated: boolean }>; pagePlan?: PagePlan;
 }
@@ -65,13 +70,14 @@ export class ReportingClient {
       method: 'PUT', body: JSON.stringify({ definition, expectedRevision }),
     });
   }
-  publishView(projectId: string, viewId: string, version?: string) {
+  publishView(projectId: string, viewId: string, version?: string, expectedRevision?: number) {
     return this.request<{ version: string; value: DataViewDefinition }>(`/projects/${encodeURIComponent(projectId)}/views/${encodeURIComponent(viewId)}/publish`, {
-      method: 'POST', body: JSON.stringify(version ? { version } : {}),
+      method: 'POST', body: JSON.stringify({ ...(version ? { version } : {}), ...(expectedRevision !== undefined ? { expectedRevision } : {}) }),
     });
   }
   previewViews(projectId: string, request: { documentType: string; businessKey: Record<string, string>; viewIds?: string[];
-    definitions?: DataViewDefinition[]; offset?: number; limit?: number; template?: TemplatePackage; pageDefinitionId?: string }) {
+    definitions?: DataViewDefinition[]; offset?: number; limit?: number; template?: TemplatePackage; templateRef?: { id: string; version: number }; pageDefinitionId?: string;
+    versionMode?: 'draft' | 'pinned' }) {
     return this.request<ViewPreviewReply>(`/projects/${encodeURIComponent(projectId)}/views/preview`, { method: 'POST', body: JSON.stringify(request) });
   }
   saveTemplateDraft(projectId: string, template: TemplatePackage, expectedRevision: number) {
@@ -89,14 +95,38 @@ export class ReportingClient {
     return this.request<{ version: number; publishedAt: string; value: TemplatePackage }>(
       `/projects/${encodeURIComponent(projectId)}/templates/${encodeURIComponent(templateId)}/versions/${version}`);
   }
-  publishTemplate(projectId: string, templateId: string) {
-    return this.request<{ version: number; value: TemplatePackage }>(`/projects/${encodeURIComponent(projectId)}/templates/${encodeURIComponent(templateId)}/publish`, { method: 'POST', body: '{}' });
+  publishTemplate(projectId: string, templateId: string, expectedRevision: number) {
+    return this.request<{ version: number; value: TemplatePackage }>(`/projects/${encodeURIComponent(projectId)}/templates/${encodeURIComponent(templateId)}/publish`, { method: 'POST', body: JSON.stringify({ expectedRevision }) });
+  }
+  preflightTemplate(projectId: string, templateId: string, expectedRevision?: number) {
+    return this.request<{ projectId: string; templateId: string; draftRevision: number;
+      viewRefs: Array<{ viewId: string; version: string }>; functionRefs: Array<{ functionId: string; version: string }> }>(
+      `/projects/${encodeURIComponent(projectId)}/templates/${encodeURIComponent(templateId)}/preflight`, {
+        method: 'POST', body: JSON.stringify(expectedRevision === undefined ? {} : { expectedRevision }),
+      });
+  }
+  setTemplateDisabled(projectId: string, templateId: string, disabled: boolean) {
+    return this.request<{ projectId: string; templateId: string; disabled: boolean }>(
+      `/projects/${encodeURIComponent(projectId)}/templates/${encodeURIComponent(templateId)}/${disabled ? 'disable' : 'enable'}`, { method: 'POST', body: '{}' });
+  }
+  inspectTemplateMatches(projectId: string, documentType: string, businessKey: Record<string, string>) {
+    return this.request<{ candidates: Array<{ templateId: string; version: number; disabled: boolean; priority: number; conditions: Record<string, string>; matches: boolean; mismatchedFields: string[]; pendingFields?: string[]; status?: string }>;
+      winner?: { templateId: string; version: number; priority: number }; ambiguous: boolean; maximumPriority?: number;
+      matchFacts?: Record<string, { value: string; datasetId: string; fieldId: string; recordCount: number }> }>(
+      `/projects/${encodeURIComponent(projectId)}/templates/match-preview`, { method: 'POST', body: JSON.stringify({ documentType, businessKey }) });
   }
   setTemplateMatchRule(projectId: string, templateId: string, version: number,
     rule: { documentType: string; conditions: Record<string, string>; priority: number }) {
     return this.request(`/projects/${encodeURIComponent(projectId)}/templates/${encodeURIComponent(templateId)}/versions/${version}/match-rule`, {
       method: 'PUT', body: JSON.stringify(rule),
     });
+  }
+  getTemplateMatchRule(projectId: string, templateId: string, version: number) {
+    return this.request<{ documentType: string; conditions: Record<string, string>; priority: number }>(
+      `/projects/${encodeURIComponent(projectId)}/templates/${encodeURIComponent(templateId)}/versions/${version}/match-rule`);
+  }
+  deleteTemplateMatchRule(projectId: string, templateId: string, version: number) {
+    return this.request(`/projects/${encodeURIComponent(projectId)}/templates/${encodeURIComponent(templateId)}/versions/${version}/match-rule`, { method: 'DELETE' });
   }
   generate(projectId: string, request: { mode: 'preview'; documentType: string; businessKey: Record<string, string>;
     templateRef?: { id: string; version: number }; autoMatch?: boolean; pageDefinitionId?: string; idempotencyKey: string; parameters?: Record<string, string | number | boolean | null> }) {

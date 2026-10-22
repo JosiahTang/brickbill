@@ -85,6 +85,13 @@ export function validateProjectSemantics(project: ProjectDefinition): void {
       if (field.nullable) issue(`主键字段 ${key} 不可空`, { datasetId: dataset.datasetId, fieldId: key });
     }
   }
+  for (const [matchFieldId, definition] of Object.entries(project.templateMatchFields ?? {})) {
+    if (Object.hasOwn(project.businessKey, matchFieldId))
+      issue(`模板匹配字段 ${matchFieldId} 与业务查询参数重名`, { fieldId: matchFieldId });
+    const dataset = datasets.get(definition.datasetId);
+    if (!dataset?.fields.some(field => field.fieldId === definition.fieldId))
+      issue(`模板匹配字段 ${matchFieldId} 必须引用已登记的数据集字段`, { datasetId: definition.datasetId, fieldId: definition.fieldId });
+  }
   const relationships = new Set<string>();
   for (const relation of project.relationships) {
     if (relationships.has(relation.relationshipId)) issue(`关系标识重复：${relation.relationshipId}`);

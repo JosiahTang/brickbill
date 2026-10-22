@@ -1,4 +1,4 @@
-name: T24 CI and acceptance
+name: Brickbill CI and acceptance
 
 on:
   push:
@@ -11,7 +11,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: t24-${{ github.workflow }}-${{ github.ref }}
+  group: brickbill-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -19,6 +19,8 @@ jobs:
     name: Verify, PDF, and browser acceptance
     runs-on: ubuntu-24.04
     timeout-minutes: 45
+    env:
+      BRICKBILL_REQUIRE_PDF_TESTS: '1'
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v6
@@ -61,7 +63,7 @@ jobs:
           if-no-files-found: ignore
 
   docker-compose-restart:
-    name: Docker deployment and snapshot restart smoke
+    name: Docker backup restore and pinned dependency smoke
     runs-on: ubuntu-24.04
     needs: verify-and-browser
     timeout-minutes: 45
@@ -90,18 +92,18 @@ jobs:
           REPORTING_PDF_FALLBACK_FONT=/fonts/t24-wqy-cjk.ttc
           REPORTING_PDF_FONT_MAP_JSON={}
           BRICKBILL_BIND=127.0.0.1
-          BRICKBILL_PORT=8080
           EOF
-      - name: Build, generate, restart, and verify snapshot hash
+      - name: Build, generate, restart, back up, restore into an empty volume, and verify snapshot hash
         run: npm run test:compose-smoke
         env:
           BRICKBILL_SMOKE_TOKEN: brickbill-ci-synthetic-token
-          BRICKBILL_SMOKE_URL: http://127.0.0.1:8080
-      - name: Save Compose logs and restart hash records
+          BRICKBILL_SMOKE_CREATE_DEMO: '1'
+          BRICKBILL_SMOKE_EXPECT_PDF: '1'
+      - name: Save Compose logs, backup archive, restore, and hash records
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v7
         with:
-          name: t24-compose-deployment-smoke
-          path: output/t24/
+          name: t38-compose-backup-restore-smoke
+          path: output/t38/
           retention-days: 14
           if-no-files-found: warn

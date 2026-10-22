@@ -1,4 +1,6 @@
 import { randomUUID, createHash } from 'node:crypto';
+import { requireSmokeGenerationId } from './compose-smoke-result.mjs';
+import { verifyGenerationDependencies } from './deployment-dependencies.mjs';
 import { buildExampleTemplate } from '../examples/projects/quality-templates.ts';
 import { dalipuTemplates } from '../examples/projects/dalipu/index.ts';
 
@@ -18,25 +20,39 @@ async function request(path, init = {}) {
 async function json(path, method, body) {
   return (await request(path, { method, body: JSON.stringify(body) })).json();
 }
+async function pdfEvidence(root) {
+  const pdf = new Uint8Array(await (await request(`${root}/file.pdf`)).arrayBuffer());
+  if (Buffer.from(pdf.subarray(0, 5)).toString('ascii') !== '%PDF-') throw new Error('PDF 文件签名错误');
+  return { pdfAvailable: true, pdfSha256: createHash('sha256').update(pdf).digest('hex'),
+    pdfByteLength: pdf.byteLength };
+}
 async function verifyGeneration(projectId, generationId) {
   const root = `/api/projects/${encodeURIComponent(projectId)}/generations/${encodeURIComponent(generationId)}`;
   const generation = await (await request(root)).json();
   if (generation.status !== 'complete' || generation.pageCount < 1) throw new Error('生成状态或页数异常');
+  const dependencies = await verifyGenerationDependencies(projectId, generation.snapshot, async path =>
+    (await request(path)).json());
   const original = new Uint8Array(await (await request(`${root}/file`)).arrayBuffer());
   if (Buffer.from(original.subarray(0, 2)).toString('ascii') !== 'PK') throw new Error('XLSX 文件签名错误');
   const actualHash = createHash('sha256').update(original).digest('hex');
   if (actualHash !== generation.snapshot.output.sha256) throw new Error('XLSX 快照哈希不一致');
+  let originalPdf;
+  if (process.env.BRICKBILL_SMOKE_EXPECT_PDF === '1') {
+    if (!generation.pdfUrl) throw new Error('PDF 项目开关或渲染环境未生效');
+    originalPdf = await pdfEvidence(root);
+  }
   const reprint = await json(`${root}/reprint`, 'POST', {});
   if (!reprint.reusedSnapshot) throw new Error('重印没有复用快照');
   const repeated = new Uint8Array(await (await request(`${root}/file`)).arrayBuffer());
   if (!Buffer.from(repeated).equals(Buffer.from(original))) throw new Error('重印文件发生变化');
-  if (process.env.BRICKBILL_SMOKE_EXPECT_PDF === '1') {
-    if (!generation.pdfUrl) throw new Error('PDF 项目开关或渲染环境未生效');
-    const pdf = new Uint8Array(await (await request(`${root}/file.pdf`)).arrayBuffer());
-    if (Buffer.from(pdf.subarray(0, 5)).toString('ascii') !== '%PDF-') throw new Error('PDF 文件签名错误');
+  if (originalPdf) {
+    const repeatedPdf = await pdfEvidence(root);
+    if (originalPdf.pdfSha256 !== repeatedPdf.pdfSha256 || originalPdf.pdfByteLength !== repeatedPdf.pdfByteLength)
+      throw new Error('重印 PDF 文件摘要或字节数发生变化');
   }
   return { projectId, generationId, pageCount: generation.pageCount, sha256: actualHash,
-    pdfAvailable: !!generation.pdfUrl };
+    dependencySha256: dependencies.sha256, dependencyCount: dependencies.viewCount + dependencies.functionCount + dependencies.resourceCount,
+    pdfAvailable: !!originalPdf, ...originalPdf };
 }
 
 const health = await (await request('/api/health')).json();
@@ -71,4 +87,5 @@ if (!generationId && process.env.BRICKBILL_SMOKE_CREATE_DEMO === '1') {
 }
 const result = generationId ? await verifyGeneration(projectId, generationId)
   : { status: 'healthy', projects: projects.map(project => project.projectId) };
+requireSmokeGenerationId(generationId, process.env.BRICKBILL_SMOKE_REQUIRE_GENERATION === '1');
 console.log(JSON.stringify(result));

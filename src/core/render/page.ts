@@ -1,4 +1,4 @@
-import { copy, keyOf, type Field, type TemplateDocument } from '../../domain/model.ts';
+import { copy, keyOf, type Field, type Rect, type TemplateDocument } from '../../domain/model.ts';
 import { ReportingError } from '../contracts/errors.ts';
 import type { DataViewResult, PageDefinition, PagePlan, PagePlanEntry, PageRegionDefinition, Scalar, TemplatePackage, TemplateImagePlacement, ViewRecord } from '../contracts/types.ts';
 import { validateTemplatePackage } from '../templates/package.ts';
@@ -111,17 +111,23 @@ function regionRecords(page: PagePlanEntry, region: PageRegionDefinition, view: 
   });
   return { records, keys: allocation.groupKeys };
 }
+function fixedRegionRect(page: PagePlanEntry, region: PageRegionDefinition): Rect {
+  const allocation = page.allocations.find(item => item.regionId === region.regionId);
+  const used = (allocation?.recordIds.length ?? 0) * (region.recordHeight ?? region.rect.rows);
+  return { ...region.rect, rows: Math.max(region.rect.rows, used + (page.blankRows[region.regionId] ?? 0)) };
+}
 function applyRegion(source: TemplateDocument, target: TemplateDocument, page: PagePlanEntry, region: PageRegionDefinition,
   view: DataViewResult, totalPages: number, globalRecordOffset: number, groupNumbers: Map<string, number>,
   parameters: Record<string, Scalar>): { recordCount: number; groupCount: number } {
   const { records, keys } = regionRecords(page, region, view);
   const recordHeight = region.recordHeight ?? region.rect.rows;
   if (recordHeight < region.rect.rows) throw new ReportingError({ code: 'LAYOUT_OVERFLOW', stage: 'render', message: `区域 ${region.regionId} 的记录高度小于样板高度`, context: { regionId: region.regionId } });
-  const end = region.rect.r + records.length * recordHeight;
+  const occupied = fixedRegionRect(page, region);
+  const end = occupied.r + occupied.rows;
   if (end > target.rows) throw new ReportingError({ code: 'LAYOUT_OVERFLOW', stage: 'render', message: `区域 ${region.regionId} 的投影超出工作表行数`, context: { regionId: region.regionId, pageNumber: page.pageNumber } });
-  if (records.length || region.emptyPolicy === 'hide') removeRegionContents(target, region);
+  if (records.length || region.emptyPolicy === 'hide') removeRegionContents(target, { ...region, rect: occupied });
   else {
-    for (let row = region.rect.r; row < region.rect.r + region.rect.rows; row++) for (let col = region.rect.c; col < region.rect.c + region.rect.cols; col++) {
+    for (let row = occupied.r; row < occupied.r + occupied.rows; row++) for (let col = occupied.c; col < occupied.c + occupied.cols; col++) {
       const cell = target.cells[keyOf(row, col)];
       if (cell?.binding) { delete cell.binding; cell.text = ''; cell.excelValue = null; }
     }
@@ -335,8 +341,21 @@ export function projectPagePlan(template: TemplatePackage, pagePlan: PagePlan, v
           ...(pageDefinition.customPaperMm ? { customPaperMm: copy(pageDefinition.customPaperMm) } : {}),
           ...(pageDefinition.printableRect ? { printableRect: copy(pageDefinition.printableRect) } : {}),
           ...(pageDefinition.repeatHeaderRows ? { repeatHeaderRows: copy(pageDefinition.repeatHeaderRows) } : {}) },
-        imagePlacements: copy((pageDefinition.imagePlacements ?? []).filter(image => image.worksheetId === worksheetId
-          && (image.repeatOn !== 'first' || page.pageNumber === 1) && (image.repeatOn !== 'last' || page.pageNumber === pagePlan.totalPages))) });
+        imagePlacements: [...(source.images ?? []).map(image => {
+          const conflicting = regions.find(region => {
+            if (!['detail', 'groupHeader', 'groupFooter'].includes(region.kind)) return false;
+            const rect = region.kind === 'detail' && !isFlowSheet ? fixedRegionRect(page, region) : region.rect;
+            return image.rect.r < rect.r + rect.rows && rect.r < image.rect.r + image.rect.rows
+              && image.rect.c < rect.c + rect.cols && rect.c < image.rect.c + image.rect.cols;
+          });
+          if (conflicting || isFlowSheet) throw new ReportingError({ code: 'LAYOUT_OVERFLOW', stage: 'render',
+            message: `导入图片 ${image.imageId} 暂不支持位于动态重复区域或流式工作表，请移至固定区域`, context: { worksheetId, regionId: conflicting?.regionId, pageNumber: page.pageNumber } });
+          const rect = pageDefinition.printableRect;
+          if (rect && (image.rect.r < rect.r || image.rect.c < rect.c || image.rect.r + image.rect.rows > rect.r + rect.rows || image.rect.c + image.rect.cols > rect.c + rect.cols))
+            throw new ReportingError({ code: 'LAYOUT_OVERFLOW', stage: 'render', message: `图片 ${image.imageId} 超出打印范围`, context: { worksheetId, pageNumber: page.pageNumber } });
+          return { imageId: image.imageId, resourceId: image.resourceId, worksheetId, rect: copy(image.rect) };
+        }), ...copy((pageDefinition.imagePlacements ?? []).filter(image => image.worksheetId === worksheetId
+          && (image.repeatOn !== 'first' || page.pageNumber === 1) && (image.repeatOn !== 'last' || page.pageNumber === pagePlan.totalPages)))] });
     }
   }
   return { pagePlan: copy(pagePlan), pages, resources: copy(template.resources ?? []),

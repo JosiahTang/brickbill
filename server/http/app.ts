@@ -1,7 +1,7 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { createHash } from 'node:crypto';
 import type { ReportingService } from '../services/generate.ts';
-import { parseTokenAuthorizations } from '../config.ts';
+import { parseTokenActorIds, parseTokenAuthorizations } from '../config.ts';
 
 export interface RequestAccess { projectIds: string[]; actorId?: string }
 export type ReportingAuthorizer = (request: IncomingMessage) => Promise<RequestAccess> | RequestAccess;
@@ -69,7 +69,7 @@ export function createReportingHttpServer(service: ReportingService, authorize: 
     if (!origin) response.setHeader('access-control-allow-origin', '*');
     else if (allowedOrigins.includes(origin)) response.setHeader('access-control-allow-origin', origin);
     response.setHeader('vary', 'origin');
-    response.setHeader('access-control-allow-methods', 'GET,POST,PUT,OPTIONS');
+    response.setHeader('access-control-allow-methods', 'GET,POST,PUT,DELETE,OPTIONS');
     response.setHeader('access-control-allow-headers', 'content-type,authorization,x-idempotency-key');
     if (request.method === 'OPTIONS') { response.writeHead(204); response.end(); return; }
     try {
@@ -129,16 +129,27 @@ export function createReportingHttpServer(service: ReportingService, authorize: 
           json(response, 200, draft); return;
         }
         if (parts.length === 6 && parts[5] === 'publish' && request.method === 'POST') {
-          const requested = (await bodyJson(request)).version;
+          const body = await bodyJson(request, 1024);
+          const requested = body.version;
           let version = requested;
           if (!version) { const latest = await service.views.latest(projectId, viewId); if (latest) version = nextPatchVersion(latest.version); }
-          json(response, 201, await service.publishView(projectId, viewId, version)); return;
+          json(response, 201, await service.publishView(projectId, viewId, version, body.expectedRevision)); return;
         }
         if (parts.length === 7 && parts[5] === 'versions' && request.method === 'GET') {
           const published = await service.views.getPublished(projectId, viewId, parts[6]);
           if (!published) throw Object.assign(new Error('视图版本不存在'), { code: 'DATA_NOT_FOUND' });
           json(response, 200, published); return;
         }
+      }
+
+      if (resource === 'templates' && parts.length === 5 && parts[4] === 'match-preview' && request.method === 'POST') {
+        const body = await bodyJson(request, 64 * 1024);
+        json(response, 200, await service.inspectTemplateMatches(projectId, body.documentType, body.businessKey)); return;
+      }
+
+      if (resource === 'templates' && parts.length === 6 && parts[5] === 'preflight' && request.method === 'POST') {
+        const body = await bodyJson(request, 1024);
+        json(response, 200, await service.preflightTemplate(projectId, parts[4], body.expectedRevision)); return;
       }
 
       if (resource === 'templates' && parts.length >= 5) {
@@ -160,10 +171,14 @@ export function createReportingHttpServer(service: ReportingService, authorize: 
           json(response, 200, record); return;
         }
         if (parts.length === 6 && parts[5] === 'publish' && request.method === 'POST') {
-          json(response, 201, await service.publishTemplate(projectId, templateId)); return;
+          const body = await bodyJson(request, 1024);
+          json(response, 201, await service.publishTemplate(projectId, templateId, body.expectedRevision)); return;
         }
         if (parts.length === 6 && parts[5] === 'disable' && request.method === 'POST') {
           await service.disableTemplate(projectId, templateId); json(response, 200, { projectId, templateId, disabled: true }); return;
+        }
+        if (parts.length === 6 && parts[5] === 'enable' && request.method === 'POST') {
+          await service.enableTemplate(projectId, templateId); json(response, 200, { projectId, templateId, disabled: false }); return;
         }
         if (parts.length === 7 && parts[5] === 'resources' && request.method === 'PUT') {
           const body = await bodyJson(request);
@@ -182,6 +197,13 @@ export function createReportingHttpServer(service: ReportingService, authorize: 
           const value = await service.templates.getMatchRule(projectId, templateId, Number(parts[6]));
           if (!value) throw Object.assign(new Error('模板自动匹配规则不存在'), { code: 'DATA_NOT_FOUND' });
           json(response, 200, value); return;
+        }
+        if (parts.length === 8 && parts[5] === 'versions' && parts[7] === 'match-rule' && request.method === 'DELETE') {
+          const version = Number(parts[6]);
+          if (!Number.isInteger(version) || !(await service.templates.getVersion(projectId, templateId, version)))
+            throw Object.assign(new Error('模板发布版本不存在'), { code: 'DATA_NOT_FOUND' });
+          await service.templates.deleteMatchRule(projectId, templateId, version);
+          json(response, 200, { projectId, templateId, version, deleted: true }); return;
         }
       }
 
@@ -256,13 +278,16 @@ export function createReportingHttpServer(service: ReportingService, authorize: 
   return server;
 }
 
-export function loopbackAuthorizer(tokensJson = process.env.REPORTING_TOKENS_JSON, localProjectIds: string[] = []): ReportingAuthorizer {
+export function loopbackAuthorizer(tokensJson = process.env.REPORTING_TOKENS_JSON, localProjectIds: string[] = [],
+  tokenActorsJson = process.env.REPORTING_TOKEN_ACTORS_JSON): ReportingAuthorizer {
   const configured = parseTokenAuthorizations(tokensJson);
+  const actorIds = parseTokenActorIds(tokenActorsJson, tokensJson);
   return request => {
     if (configured) {
       const token = request.headers.authorization?.replace(/^Bearer\s+/i, '');
       return { projectIds: token ? configured[token] ?? [] : [],
-        ...(token && configured[token] ? { actorId: `token:${createHash('sha256').update(token).digest('hex').slice(0, 16)}` } : {}) };
+        ...(token && configured[token] ? { actorId: actorIds
+          ? actorIds[token] : 'token:' + createHash('sha256').update(token).digest('hex').slice(0, 16) } : {}) };
     }
     const address = request.socket.remoteAddress ?? '';
     const local = address === '127.0.0.1' || address === '::1' || address.startsWith('::ffff:127.');

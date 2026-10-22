@@ -1,9 +1,11 @@
 import { defineConfig, devices } from '@playwright/test';
 import { resolve } from 'node:path';
+import { randomUUID } from 'node:crypto';
 
 const apiPort = 5184;
 const webPort = 5183;
 const baseURL = `http://127.0.0.1:${webPort}`;
+const dataDirectory = resolve('.runtime-test/e2e', randomUUID());
 
 export default defineConfig({
   testDir: './e2e',
@@ -23,10 +25,10 @@ export default defineConfig({
     command: 'node --experimental-strip-types server/main.ts',
     url: `http://127.0.0.1:${apiPort}/api/health`,
     timeout: 60_000,
-    reuseExistingServer: !process.env.CI,
+    reuseExistingServer: false,
     env: {
       REPORTING_MODE: 'development', REPORTING_HOST: '127.0.0.1', REPORTING_PORT: String(apiPort),
-      REPORTING_DATA_DIR: resolve('.runtime-test/e2e'), REPORTING_DEMO_PROJECTS: 'enabled',
+      REPORTING_DATA_DIR: dataDirectory, REPORTING_DEMO_PROJECTS: 'enabled',
       REPORTING_TOKENS_JSON: '', REPORTING_PROJECTS_FILE: '',
       REPORTING_PDF_PYTHON: process.env.REPORTING_PDF_PYTHON ?? '',
       REPORTING_PDF_FALLBACK_FONT: process.env.REPORTING_PDF_FALLBACK_FONT ?? '',
@@ -36,7 +38,7 @@ export default defineConfig({
     command: `node node_modules/vite/bin/vite.js --host 127.0.0.1 --port ${webPort} --strictPort`,
     url: baseURL,
     timeout: 60_000,
-    reuseExistingServer: !process.env.CI,
+    reuseExistingServer: false,
     env: { REPORTING_DEV_API_URL: `http://127.0.0.1:${apiPort}` },
   }],
 });

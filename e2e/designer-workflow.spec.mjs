@@ -24,7 +24,6 @@ test('import, drag a field, edit pagination, save, publish and generate matching
   template.worksheets[0].document.colWidthPx[6] = 120;
   template.worksheets[0].document.colWidthPx[10] = 145;
   template.worksheets[0].document.colWidthPx[0] = 140;
-  template.worksheets[0].document.merges.push({ r: 42, c: 0, rows: 1, cols: 16 });
   template.worksheets[1].document.colWidthPx[2] = 145;
   const sourceXlsx = await exportTemplatePackage(template);
 
@@ -71,10 +70,21 @@ test('import, drag a field, edit pagination, save, publish and generate matching
   await expect(service.locator('select').first()).toHaveValue('dalipu-demo');
   await service.getByRole('button', { name: '保存项目模板草稿' }).click();
   await expect(service).toContainText('服务端草稿修订：1');
+  await service.getByRole('button', { name: '发布预检' }).click();
+  await expect(service).toContainText('预检通过');
   await service.getByRole('button', { name: '发布新版本' }).click();
   await expect(service).toContainText('已发布版本：1');
+  await service.getByLabel('试算口径').selectOption('pinned');
+  await service.getByRole('button', { name: '视图试算' }).click();
+  await expect(service.locator('.view-trial-results')).toContainText('模板固定版本试算');
+  const customerMatch = service.locator('label.checkbox').filter({ hasText: '匹配 收货客户 · customer' });
+  await expect(customerMatch).toBeVisible();
+  await customerMatch.locator('input').check();
+  await customerMatch.locator('xpath=..').locator('input').nth(1).fill('演示客户甲');
+  await service.getByRole('checkbox', { name: /按项目中已登记的匹配条件自动选择模板/ }).check();
+  await service.getByRole('button', { name: '保存当前已发布版本匹配规则' }).click();
 
-  await service.getByRole('button', { name: '读取业务数据并预览' }).click();
+  await service.getByRole('button', { name: '自动匹配并预览' }).click();
   const preview = dialog(page, '固定快照的逐页预览');
   await expect(preview).toBeVisible();
   await expect(preview.locator('.preview-controls strong')).toContainText('1 /');
@@ -85,6 +95,8 @@ test('import, drag a field, edit pagination, save, publish and generate matching
   expect(generationResponse.ok()).toBeTruthy();
   const generation = await generationResponse.json();
   expect(generation.pageCount).toBeGreaterThanOrEqual(2);
+  expect(generation.snapshot.templateMatch.facts.customer.value).toBe('演示客户甲');
+  expect(generation.snapshot.templateMatch.rule.conditions.customer).toBe('演示客户甲');
   await preview.getByRole('button', { name: '末页' }).click();
   await expect(preview.locator('.page-kind')).toContainText('appendix');
 
@@ -127,9 +139,9 @@ test('import, drag a field, edit pagination, save, publish and generate matching
   const historyDownloadEvent = page.waitForEvent('download');
   await reopened.getByRole('button', { name: '下载 XLSX' }).first().click();
   expect(hash(await downloadedBytes(await historyDownloadEvent))).toBe(generation.snapshot.output.sha256);
-  await reopened.getByLabel(/质保书打印号/).fill('DEMO-CERT-BULK-001');
-  await reopened.getByLabel(/产品类别/).fill('T');
-  await reopened.getByRole('button', { name: '读取业务数据并预览' }).click();
+  await reopened.getByRole('textbox', { name: /质保书打印号/ }).fill('DEMO-CERT-BULK-001');
+  await reopened.getByRole('textbox', { name: /产品类别/ }).fill('T');
+  await reopened.getByRole('button', { name: '自动匹配并预览' }).click();
   await expect(preview).toBeVisible();
   const pages = Number((await preview.locator('.preview-controls strong').innerText()).split('/')[1].trim());
   expect(pages).toBeGreaterThan(2);

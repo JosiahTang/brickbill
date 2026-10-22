@@ -5,11 +5,26 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { once } from 'node:events';
 import { createLocalReportingRuntime } from '../server/runtime.ts';
-import { createReportingHttpServer } from '../server/http/app.ts';
+import { createReportingHttpServer, loopbackAuthorizer } from '../server/http/app.ts';
 import { newDocument } from '../src/domain/model.ts';
 import { bindField } from '../src/domain/operations.ts';
 import { createTemplatePackage, upsertPageDefinition } from '../src/core/templates/package.ts';
 import { encodeCompositeKey } from '../src/core/adapters/project-adapter.ts';
+
+test('T33.3: configured bearer token maps to stable server-side actor and unmapped tokens cannot sign', () => {
+  const tokens = JSON.stringify({ 'employee-token-a': ['dalipu-demo'], 'employee-token-b': ['general-mes-demo'], 'preview-token': ['dalipu-demo'] });
+  const actors = JSON.stringify({ 'employee-token-a': 'employee:0042', 'employee-token-b': 'employee:0042' });
+  const authorize = loopbackAuthorizer(tokens, [], actors);
+  const request = token => ({ headers: { authorization: 'Bearer ' + token }, socket: { remoteAddress: '10.0.0.12' } });
+  assert.deepEqual(authorize(request('employee-token-a')), { projectIds: ['dalipu-demo'], actorId: 'employee:0042' });
+  assert.deepEqual(authorize(request('employee-token-b')), { projectIds: ['general-mes-demo'], actorId: 'employee:0042' });
+  const previewOnly = authorize(request('preview-token'));
+  assert.deepEqual(previewOnly.projectIds, ['dalipu-demo']);
+  assert.equal(previewOnly.actorId, undefined, 'an unmapped token keeps read access but cannot produce a signoff identity');
+  assert.throws(() => loopbackAuthorizer(tokens, [], JSON.stringify({ outsider: 'employee:1' })), /必须同时配置/);
+  const legacy = loopbackAuthorizer(JSON.stringify({ 'legacy-token': ['dalipu-demo'] }), [], undefined);
+  assert.match(legacy(request('legacy-token')).actorId, /^token:[0-9a-f]{16}$/);
+});
 
 function makeTemplate(projectId) {
   const document = newDocument(); document.name = '演示质保书'; document.sheetName = '主表';
@@ -50,13 +65,25 @@ test('HTTP generation pins a published template, snapshots output, paginates pre
     assert.equal(health.status, 200);
     assert.deepEqual(await health.json(), { status: 'ok' });
     const projects = await request('/projects');
-    assert.deepEqual((await projects.json()).map(item => item.projectId), ['dalipu-demo']);
+    const projectList = await projects.json();
+    assert.deepEqual(projectList.map(item => item.projectId), ['dalipu-demo']);
+    assert.deepEqual(projectList[0].templateMatchFields.customer,
+      { label: '收货客户', datasetId: 'certificate.header', fieldId: 'cert.customer' });
     assert.equal((await request('/projects/general-mes-demo/catalog')).status, 403);
 
     const template = makeTemplate('dalipu-demo');
     const templatePath = `/projects/dalipu-demo/templates/${encodeURIComponent(template.packageId)}`;
     const saved = await sendJson(`${templatePath}/draft`, 'PUT', { template, expectedRevision: 0 });
     assert.equal(saved.status, 200); assert.equal((await saved.json()).revision, 1);
+    const preflight = await sendJson(`${templatePath}/preflight`, 'POST', { expectedRevision: 1 });
+    assert.equal(preflight.status, 200, await preflight.clone().text());
+    const preflightResult = await preflight.json();
+    assert.equal(preflightResult.draftRevision, 1);
+    assert.ok(preflightResult.viewRefs.some(ref => ref.viewId === 'view.material.lines'));
+    assert.equal((await runtime.service.templates.listVersions('dalipu-demo', template.packageId)).length, 0,
+      'preflight resolves the same dependencies as publish without creating a version');
+    assert.equal((await sendJson(`${templatePath}/preflight`, 'POST', { expectedRevision: 0 })).status, 409,
+      'preflight rejects an outdated draft revision without changing it');
     const resource = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aL1sAAAAASUVORK5CYII=';
     const resourceSave = await sendJson(`${templatePath}/resources/image.seal`, 'PUT', { mediaType: 'image/png', base64: resource });
     assert.equal(resourceSave.status, 201);
@@ -78,6 +105,19 @@ test('HTTP generation pins a published template, snapshots output, paginates pre
     assert.equal(publishedResponse.status, 201);
     const published = await publishedResponse.json(); assert.equal(published.version, 1);
     assert.equal(published.value.viewRefs[0].viewId, 'view.material.lines');
+    const pinnedTrial = await sendJson('/projects/dalipu-demo/views/preview', 'POST', {
+      documentType: 'qualityCertificate', businessKey: { printNo: 'DEMO-CERT-001', productPart: 'T' },
+      versionMode: 'pinned', templateRef: { id: template.packageId, version: 1 },
+      template: { projectId: 'untrusted-client-package' }, viewIds: ['view.material.lines'], limit: 2,
+    });
+    assert.equal(pinnedTrial.status, 200, await pinnedTrial.clone().text());
+    assert.equal((await pinnedTrial.json()).mode, 'pinned', 'pinned trial loads the canonical published package using its server-side reference');
+    const oneViewTrial = await sendJson('/projects/dalipu-demo/views/preview', 'POST', {
+      documentType: 'qualityCertificate', businessKey: { printNo: 'DEMO-CERT-001', productPart: 'T' },
+      versionMode: 'draft', definitions: [], viewIds: ['view.material.lines'], limit: 2,
+    });
+    assert.equal(oneViewTrial.status, 200, await oneViewTrial.clone().text());
+    assert.equal((await oneViewTrial.json()).pagePlan, undefined, 'single-view trial does not plan unrelated template pages');
     const templates = await (await request('/projects/dalipu-demo/templates')).json();
     assert.ok(templates.some(item => item.templateId === template.packageId && item.latestVersion === 1 && !item.disabled));
     const loadedVersion = await request(`${templatePath}/versions/1`);
@@ -85,6 +125,17 @@ test('HTTP generation pins a published template, snapshots output, paginates pre
     const matchRule = { documentType: 'qualityCertificate', conditions: { productPart: 'T' }, priority: 10 };
     const matchPath = `${templatePath}/versions/1/match-rule`;
     assert.equal((await sendJson(matchPath, 'PUT', matchRule)).status, 200);
+    const matchPreview = await sendJson('/projects/dalipu-demo/templates/match-preview', 'POST', {
+      documentType: 'qualityCertificate', businessKey: { printNo: 'DEMO-CERT-001', productPart: 'T' },
+    });
+    assert.equal(matchPreview.status, 200);
+    assert.equal((await matchPreview.json()).winner.templateId, template.packageId);
+    const unmatchedPreview = await sendJson('/projects/dalipu-demo/templates/match-preview', 'POST', {
+      documentType: 'qualityCertificate', businessKey: { printNo: 'DEMO-CERT-001', productPart: 'X' },
+    });
+    const unmatchedResult = await unmatchedPreview.json();
+    assert.equal(unmatchedResult.winner, undefined);
+    assert.ok(unmatchedResult.candidates[0].mismatchedFields.includes('productPart'));
 
     const generationPath = '/projects/dalipu-demo/generations';
     const payload = { mode: 'preview', documentType: 'qualityCertificate', businessKey: { printNo: 'DEMO-CERT-001', productPart: 'T' },
@@ -96,6 +147,7 @@ test('HTTP generation pins a published template, snapshots output, paginates pre
     const generated = await generatedResponse.json(); assert.equal(generated.pageCount, 1);
     assert.equal(generated.snapshot.data, undefined, 'status response should not duplicate the stored raw source snapshot');
     const historyBeforeIssue = await request(`${generationPath}?q=DEMO-CERT-001&status=preview&page=1&pageSize=5`);
+    assert.equal(historyBeforeIssue.status, 200, await historyBeforeIssue.clone().text());
     const historyPage = await historyBeforeIssue.json();
     assert.equal(historyPage.total, 1);
     assert.equal(historyPage.items[0].generationId, generated.generationId);
@@ -206,17 +258,106 @@ test('HTTP generation pins a published template, snapshots output, paginates pre
     const otherPath = `/projects/dalipu-demo/templates/${encodeURIComponent(otherTemplate.packageId)}`;
     assert.equal((await sendJson(`${otherPath}/draft`, 'PUT', { template: otherTemplate, expectedRevision: 0 })).status, 200);
     assert.equal((await sendJson(`${otherPath}/publish`, 'POST', {})).status, 201);
-    assert.equal((await sendJson(`${otherPath}/versions/1/match-rule`, 'PUT', { ...matchRule, priority: 5 })).status, 200);
+    assert.equal((await sendJson(`${otherPath}/versions/1/match-rule`, 'PUT', {
+      documentType: 'qualityCertificate', conditions: { customer: '演示客户乙' }, priority: 50,
+    })).status, 200);
     const autoPayload = { mode: 'preview', documentType: 'qualityCertificate', businessKey: { printNo: 'DEMO-CERT-001', productPart: 'T' },
       autoMatch: true, idempotencyKey: 'certificate-auto-match-1' };
+    const matchProjectContext = runtime.service.projects.get('dalipu-demo');
+    const originalMatchCollect = matchProjectContext.adapter.collect.bind(matchProjectContext.adapter);
+    let autoCollectCount = 0;
+    matchProjectContext.adapter.collect = async request => {
+      autoCollectCount++;
+      const bundle = await originalMatchCollect(request);
+      bundle.datasets.find(item => item.datasetId === 'certificate.header').records[0].values['cert.customer'] = '演示客户乙';
+      return bundle;
+    };
+    const customerBResponse = await sendJson(generationPath, 'POST', { ...autoPayload, idempotencyKey: 'certificate-customer-b' });
+    assert.equal(customerBResponse.status, 201, await customerBResponse.clone().text());
+    const customerBGeneration = await customerBResponse.json();
+    assert.equal(customerBGeneration.snapshot.templateRef.packageId, otherTemplate.packageId,
+      'the selected customer comes from trusted collected MES data');
+    assert.equal(autoCollectCount, 1, 'auto matching and generation share one MES collection');
+    const customerBAudit = (await runtime.service.generation('dalipu-demo', customerBGeneration.generationId)).snapshot.templateMatch;
+    assert.equal(customerBAudit.facts.customer.value, '演示客户乙');
+    assert.equal(customerBAudit.facts.customer.datasetId, 'certificate.header');
+    assert.equal(customerBAudit.rule.conditions.customer, '演示客户乙');
+    const customerBMatchPreview = await sendJson('/projects/dalipu-demo/templates/match-preview', 'POST', {
+      documentType: 'qualityCertificate', businessKey: { printNo: 'DEMO-CERT-001', productPart: 'T' },
+    });
+    assert.equal((await customerBMatchPreview.json()).matchFacts.customer.value, '演示客户乙');
+    const customerBHistory = await (await request(`${generationPath}?templateId=${encodeURIComponent(otherTemplate.packageId)}`)).json();
+    assert.equal(customerBHistory.total, 1);
+    assert.equal(customerBHistory.items[0].templateMatch.facts.customer.value, '演示客户乙',
+      'the compact history index retains the original template-selection evidence');
+    const spoofedCustomer = await sendJson('/projects/dalipu-demo/templates/match-preview', 'POST', {
+      documentType: 'qualityCertificate', businessKey: { printNo: 'DEMO-CERT-001', productPart: 'T', customer: '伪造客户' },
+    });
+    assert.equal(spoofedCustomer.status, 400, 'clients cannot provide trusted collected match fields');
+    const spoofedGeneration = await sendJson(generationPath, 'POST', { ...autoPayload,
+      businessKey: { ...autoPayload.businessKey, customer: '伪造客户' }, idempotencyKey: 'certificate-spoofed-customer' });
+    assert.equal(spoofedGeneration.status, 400, 'generation also rejects a caller-supplied customer match value');
+    matchProjectContext.adapter.collect = async request => {
+      const bundle = await originalMatchCollect(request);
+      const header = bundle.datasets.find(item => item.datasetId === 'certificate.header');
+      const conflictingValues = { ...header.records[0].values, 'cert.partFlag': 'C', 'cert.customer': '演示客户乙' };
+      header.records.push({ ...structuredClone(header.records[0]),
+        recordId: encodeCompositeKey([conflictingValues['cert.printNo'], conflictingValues['cert.partFlag']]), values: conflictingValues });
+      return bundle;
+    };
+    const conflictingCustomer = await sendJson(generationPath, 'POST', { ...autoPayload, idempotencyKey: 'certificate-customer-conflict' });
+    assert.equal(conflictingCustomer.status, 422, await conflictingCustomer.clone().text());
+    assert.equal((await conflictingCustomer.json()).error.code, 'AMBIGUOUS_SCOPE');
+    matchProjectContext.adapter.collect = async request => {
+      const bundle = await originalMatchCollect(request);
+      bundle.datasets.find(item => item.datasetId === 'certificate.header').records = [];
+      return bundle;
+    };
+    const missingCustomer = await sendJson(generationPath, 'POST', { ...autoPayload, idempotencyKey: 'certificate-customer-missing' });
+    assert.equal(missingCustomer.status, 404);
+    assert.equal((await missingCustomer.json()).error.code, 'DATA_NOT_FOUND');
+    matchProjectContext.adapter.collect = originalMatchCollect;
+    assert.equal((await sendJson(`${otherPath}/versions/1/match-rule`, 'PUT', { ...matchRule, priority: 5 })).status, 200);
+    let parameterOnlyCollectionCount = 0;
+    matchProjectContext.adapter.collect = async request => { parameterOnlyCollectionCount++; return originalMatchCollect(request); };
     const autoGeneration = await (await sendJson(generationPath, 'POST', autoPayload)).json();
+    assert.equal(parameterOnlyCollectionCount, 1, 'parameter-only matching generates with a single source read');
     assert.equal(autoGeneration.snapshot.templateRef.packageId, template.packageId, 'the highest registered priority wins');
+    assert.deepEqual(autoGeneration.snapshot.templateMatch.facts, {}, 'a parameter-only rule does not perform an unnecessary second data lookup');
+    assert.equal(autoGeneration.snapshot.templateMatch.rule.conditions.productPart, 'T');
+    const collectedMatchPreview = await sendJson('/projects/dalipu-demo/templates/match-preview', 'POST', {
+      documentType: 'qualityCertificate', businessKey: { printNo: 'DEMO-CERT-001', productPart: 'T' },
+    });
+    assert.equal((await collectedMatchPreview.json()).matchFacts, undefined);
+    assert.equal(parameterOnlyCollectionCount, 1, 'parameter-only match diagnostics do not query MES');
+    matchProjectContext.adapter.collect = originalMatchCollect;
     assert.equal((await sendJson(`${otherPath}/versions/1/match-rule`, 'PUT', matchRule)).status, 200);
     const ambiguousMatch = await sendJson(generationPath, 'POST', { ...autoPayload, idempotencyKey: 'certificate-auto-match-tie' });
     assert.equal(ambiguousMatch.status, 409);
     assert.equal((await ambiguousMatch.json()).error.code, 'TEMPLATE_MATCH_AMBIGUOUS');
+    const ambiguousPreview = await sendJson('/projects/dalipu-demo/templates/match-preview', 'POST', {
+      documentType: 'qualityCertificate', businessKey: { printNo: 'DEMO-CERT-001', productPart: 'T' },
+    });
+    assert.equal((await ambiguousPreview.json()).ambiguous, true);
+
+    const otherDraftReply = await (await request(`${otherPath}/draft`)).json();
+    const revisedOther = { ...otherDraftReply.value, name: `${otherDraftReply.value.name} v2` };
+    assert.equal((await sendJson(`${otherPath}/draft`, 'PUT', { template: revisedOther, expectedRevision: otherDraftReply.revision })).status, 200);
+    assert.equal((await sendJson(`${otherPath}/publish`, 'POST', { expectedRevision: otherDraftReply.revision + 1 })).status, 201);
+    const copiedRule = await (await request(`${otherPath}/versions/1/match-rule`)).json();
+    assert.equal((await sendJson(`${otherPath}/versions/2/match-rule`, 'PUT', copiedRule)).status, 200);
+    const latestRulePreview = await sendJson('/projects/dalipu-demo/templates/match-preview', 'POST', {
+      documentType: 'qualityCertificate', businessKey: { printNo: 'DEMO-CERT-001', productPart: 'T' },
+    });
+    const latestRuleResult = await latestRulePreview.json();
+    assert.ok(latestRuleResult.candidates.some(item => item.templateId === otherTemplate.packageId && item.version === 2));
+    assert.equal((await request(`${otherPath}/versions/2/match-rule`, 'dalipu', { method: 'DELETE' })).status, 200);
 
     await sendJson(`${templatePath}/disable`, 'POST', {});
+    const disabledInspection = await (await sendJson('/projects/dalipu-demo/templates/match-preview', 'POST', {
+      documentType: 'qualityCertificate', businessKey: { printNo: 'DEMO-CERT-001', productPart: 'T' },
+    })).json();
+    assert.equal(disabledInspection.candidates.find(item => item.templateId === template.packageId).disabled, true);
     const disabledGenerate = await sendJson(generationPath, 'POST', { ...payload, idempotencyKey: 'disabled-template-attempt' });
     assert.equal(disabledGenerate.status, 404);
     assert.equal((await request(`/projects/dalipu-demo/generations/${generated.generationId}/file`)).status, 200,

@@ -1,4 +1,5 @@
 import { defineStore } from 'pinia';
+import { toRaw } from 'vue';
 import { newDocument, copy, documentFields, fieldByPath, keyOf, type BlockDefinition, type CellStyle, type Rect, type Format, type RepeatSpec, type TemplateDocument, type Field, type RepeatRegion } from '../domain/model.ts';
 import * as ops from '../domain/operations.ts';
 import { upsertField, removeField, addInferredFields } from '../domain/fields.ts';
@@ -11,15 +12,39 @@ function stableFields(fields: Field[]): Field[] {
   return copy(fields).map(field => ({ ...field, fieldId: field.fieldId || `legacy.${field.path}` }));
 }
 
+type FieldChange = { path: string; before?: Field; after?: Field };
+type DocumentReplacement = { fromId: string; toId: string; fromPackage?: TemplatePackage; toPackage: TemplatePackage };
+// Runtime operation metadata belongs to the existing history snapshots, never the saved document.
+const fieldHistory = new WeakMap<TemplateDocument, FieldChange[]>();
+const replacementHistory = new WeakMap<TemplateDocument, DocumentReplacement>();
+function fieldChanges(before: Field[], after: Field[]): FieldChange[] {
+  return [...new Set([...before, ...after].map(field => field.path))].flatMap(path => {
+    const a = before.find(field => field.path === path), b = after.find(field => field.path === path);
+    return JSON.stringify(a) === JSON.stringify(b) ? [] : [{ path, ...(a ? { before: copy(a) } : {}), ...(b ? { after: copy(b) } : {}) }];
+  });
+}
+function synchronizeFields(template: TemplatePackage, fields: Field[]) {
+  for (const sheet of template.worksheets) {
+    sheet.document.fields = copy(fields);
+    for (const cell of Object.values(sheet.document.cells)) if (cell.binding) {
+      const field = fields.find(item => item.fieldId === cell.binding!.fieldId || item.path === cell.binding!.path);
+      if (!field) throw new Error(`字段 ${cell.binding.path} 仍被工作表 ${sheet.name} 绑定，不能撤销删除`);
+      cell.binding.path = field.path; cell.binding.fieldId = field.fieldId; cell.binding.format = field.format;
+      cell.numFmt = field.numberFormat ?? (field.format === 'number' ? '#,##0.00' : field.format === 'date' ? 'yyyy-mm-dd' : '@');
+    }
+  }
+}
+
 export const useDesignerStore = defineStore('designer', {
   state: () => ({
     doc: newDocument(),
     templatePackage: null as TemplatePackage | null,
+    loadEpoch: 0,
     activeWorksheetId: '',
     selection: { r: 0, c: 0, rows: 1, cols: 1 } as Rect,
     past: [] as TemplateDocument[], future: [] as TemplateDocument[],
     worksheetHistory: {} as Record<string, { past: TemplateDocument[]; future: TemplateDocument[] }>,
-    documentReplacements: [] as Array<{ fromId: string; toId: string; fromPackage?: TemplatePackage; toPackage: TemplatePackage }>,
+    documentReplacements: [] as DocumentReplacement[],
   }),
   getters: {
     canUndo: s => s.past.length > 0,
@@ -37,28 +62,35 @@ export const useDesignerStore = defineStore('designer', {
       const previousPackage = this.templatePackage ? this.packageSnapshot() : undefined;
       const fromId = previous.id;
       const replacement = copy(next); replacement.revision = this.doc.revision + 1;
+      const packagedDocument = copy(replacement); packagedDocument.fields = stableFields(documentFields(replacement));
+      const template = createTemplatePackage({ name: replacement.name, worksheets: [{ document: packagedDocument }] });
+      const replacementRecord = { fromId, toId: replacement.id, fromPackage: previousPackage, toPackage: copy(template) };
+      replacementHistory.set(previous, replacementRecord);
+      this.loadEpoch++;
       this.past.push(previous); if (this.past.length > 100) this.past.shift(); this.future = [];
       this.doc = replacement;
       this.selection = { r: 0, c: 0, rows: 1, cols: 1 };
-      const packagedDocument = copy(this.doc); packagedDocument.fields = stableFields(documentFields(this.doc));
-      this.templatePackage = createTemplatePackage({ name: this.doc.name, worksheets: [{ document: packagedDocument }] });
+      this.templatePackage = template;
       this.activeWorksheetId = this.templatePackage.worksheets[0].worksheetId;
-      this.documentReplacements.push({ fromId, toId: this.doc.id, fromPackage: previousPackage, toPackage: copy(this.templatePackage) });
+      this.documentReplacements.push(replacementRecord);
       this.worksheetHistory = { [this.activeWorksheetId]: { past: this.past, future: this.future } };
     },
     loadTemplatePackage(template: TemplatePackage) {
       validateTemplatePackage(template);
-      this.templatePackage = copy(template);
+      const prepared = copy(template);
       const dictionary = new Map<string, Field>();
-      for (const sheet of this.templatePackage.worksheets) for (const field of stableFields(documentFields(sheet.document))) {
+      for (const sheet of prepared.worksheets) for (const field of stableFields(documentFields(sheet.document))) {
         const existing = dictionary.get(field.path);
         if (existing && (existing.fieldId !== field.fieldId || existing.format !== field.format || existing.sourceKind !== field.sourceKind
           || existing.datasetId !== field.datasetId || existing.viewId !== field.viewId || existing.sourceFieldId !== field.sourceFieldId))
           throw new Error(`工作表间字段 ${field.path} 定义冲突；请先统一字段 ID、类型和来源`);
         if (!existing) dictionary.set(field.path, field);
       }
-      for (const sheet of this.templatePackage.worksheets) sheet.document.fields = copy([...dictionary.values()]);
-      const active = this.templatePackage.worksheets.find(sheet => sheet.visible) ?? this.templatePackage.worksheets[0];
+      for (const sheet of prepared.worksheets) sheet.document.fields = copy([...dictionary.values()]);
+      validateTemplatePackage(prepared);
+      const active = prepared.worksheets.find(sheet => sheet.visible) ?? prepared.worksheets[0];
+      this.loadEpoch++;
+      this.templatePackage = prepared;
       this.activeWorksheetId = active.worksheetId; this.doc = copy(active.document);
       this.selection = { r: 0, c: 0, rows: 1, cols: 1 }; this.past = []; this.future = [];
       this.worksheetHistory = Object.fromEntries(this.templatePackage.worksheets.map(sheet => [sheet.worksheetId, { past: [], future: [] }]));
@@ -69,17 +101,12 @@ export const useDesignerStore = defineStore('designer', {
       const active = result.worksheets.find(sheet => sheet.worksheetId === this.activeWorksheetId) ?? result.worksheets[0];
       const fields = stableFields(documentFields(this.doc));
       const activeDocument = copy(this.doc); activeDocument.fields = copy(fields);
-      result = updateWorksheet(result, active.worksheetId, activeDocument);
+      active.document = activeDocument;
+      synchronizeFields(result, fields);
+      result = updateWorksheet(result, active.worksheetId, active.document);
       result.name = this.doc.name;
       for (const sheet of result.worksheets) {
-        sheet.document.fields = copy(fields); sheet.document.name = result.name;
-        for (const cell of Object.values(sheet.document.cells)) if (cell.binding) {
-          const field = fields.find(item => item.fieldId === cell.binding!.fieldId || item.path === cell.binding!.path);
-          if (field) {
-            cell.binding.path = field.path; cell.binding.fieldId = field.fieldId; cell.binding.format = field.format;
-            cell.numFmt = field.numberFormat ?? (field.format === 'number' ? '#,##0.00' : field.format === 'date' ? 'yyyy-mm-dd' : '@');
-          }
-        }
+        sheet.document.name = result.name;
       }
       validateTemplatePackage(result);
       return result;
@@ -122,21 +149,50 @@ export const useDesignerStore = defineStore('designer', {
       template.projectId = projectId; template.catalogVersion = catalogVersion; template.revision++;
       validateTemplatePackage(template); this.templatePackage = template;
     },
+    importCatalogFields(projectId: string, catalogVersion: string, fields: Field[]) {
+      if (!this.templatePackage) throw new Error('请先打开模板');
+      if (this.templatePackage.projectId !== 'unassigned' && this.templatePackage.projectId !== projectId)
+        throw new Error('当前模板已属于其他项目，请先打开所选项目的模板');
+      let count = 0;
+      this.commit(doc => {
+        for (const field of fields) {
+          if (documentFields(doc).some(item => item.path === field.path || item.fieldId === field.fieldId)) continue;
+          upsertField(doc, field); count++;
+        }
+      }, template => { template.projectId = projectId; template.catalogVersion = catalogVersion; });
+      return count;
+    },
     saveResources(resources: NonNullable<TemplatePackage['resources']>) {
       const template = this.packageSnapshot();
       for (const existing of template.resources ?? []) if (!resources.some(item => item.resourceId === existing.resourceId)
-        && template.pageDefinitions?.some(page => page.imagePlacements?.some(image => image.resourceId === existing.resourceId)))
+        && (template.pageDefinitions?.some(page => page.imagePlacements?.some(image => image.resourceId === existing.resourceId))
+          || template.worksheets.some(sheet => sheet.document.images?.some(image => image.resourceId === existing.resourceId))))
         throw new Error(`图片 ${existing.resourceId} 仍被页面引用，请先删除定位并保存页面`);
-      if (resources.some(item => !['image/png', 'image/jpeg'].includes(item.mediaType))) throw new Error('图片资源仅支持 PNG 或 JPEG');
+      if (resources.some(item => !['image/png', 'image/jpeg', 'image/gif'].includes(item.mediaType))) throw new Error('图片资源仅支持 PNG、JPEG 或导入的 GIF');
       if (resources.reduce((sum, item) => sum + item.base64.length * 3 / 4, 0) > 20 * 1024 * 1024) throw new Error('模板图片资源总量不能超过 20 MiB');
       template.resources = copy(resources); template.revision++;
       validateTemplatePackage(template); this.templatePackage = template;
+    },
+    updateImage(imageId: string, rect: Rect) {
+      this.commit(doc => {
+        const image = doc.images?.find(item => item.imageId === imageId);
+        if (!image) throw new Error(`图片不存在：${imageId}`);
+        image.rect = copy(rect);
+      });
     },
     saveViewDraft(definition: DataViewDefinition) {
       validateContract<DataViewDefinition>('dataView', definition);
       const packageState = this.packageSnapshot(); packageState.viewDrafts ??= [];
       const index = packageState.viewDrafts.findIndex(item => item.viewId === definition.viewId && item.version === definition.version);
       if (index < 0) packageState.viewDrafts.push(copy(definition)); else packageState.viewDrafts[index] = copy(definition);
+      packageState.revision++; validateTemplatePackage(packageState); this.templatePackage = packageState;
+    },
+    setViewRefs(refs: Array<{ viewId: string; version: string }>) {
+      if (!this.templatePackage) throw new Error('请先打开模板包');
+      const packageState = this.packageSnapshot();
+      const byId = new Map(packageState.viewRefs.map(ref => [ref.viewId, ref.version]));
+      for (const ref of refs) byId.set(ref.viewId, ref.version);
+      packageState.viewRefs = [...byId].map(([viewId, version]) => ({ viewId, version })).sort((a, b) => a.viewId.localeCompare(b.viewId));
       packageState.revision++; validateTemplatePackage(packageState); this.templatePackage = packageState;
     },
     saveField(field: Field, oldPath?: string) {
@@ -173,11 +229,22 @@ export const useDesignerStore = defineStore('designer', {
       });
     },
     // Sole write path. Preview/selection changes never enter the undo history.
-    commit(change: (draft: TemplateDocument) => void) {
+    commit(change: (draft: TemplateDocument) => void, changePackage?: (template: TemplatePackage) => void) {
       const next = ops.transaction(this.doc, change); // validates BEFORE modifying this.doc
-      this.past.push(copy(this.doc));
+      const changes = fieldChanges(stableFields(documentFields(this.doc)), stableFields(documentFields(next)));
+      let template: TemplatePackage | undefined;
+      if (this.templatePackage) {
+        template = copy(this.templatePackage);
+        template.worksheets.find(sheet => sheet.worksheetId === this.activeWorksheetId)!.document = copy(next);
+        synchronizeFields(template, stableFields(documentFields(next)));
+        changePackage?.(template);
+        template = updateWorksheet(template, this.activeWorksheetId, template.worksheets.find(sheet => sheet.worksheetId === this.activeWorksheetId)!.document);
+      }
+      const previous = copy(this.doc); if (changes.length) fieldHistory.set(previous, changes);
+      this.past.push(previous);
       if (this.past.length > 100) this.past.shift();
       this.future = []; this.doc = next;
+      if (template) { this.templatePackage = template; this.doc = copy(template.worksheets.find(sheet => sheet.worksheetId === this.activeWorksheetId)!.document); }
       if (this.activeWorksheetId) this.worksheetHistory[this.activeWorksheetId] = { past: this.past, future: this.future };
     },
     loadDemo() { this.commit(doc => {
@@ -228,30 +295,47 @@ export const useDesignerStore = defineStore('designer', {
     move(id: string, r: number, c: number) { this.commit(doc => ops.moveBlock(doc, id, r, c)); },
     remove(id: string) { this.commit(doc => ops.removeBlock(doc, id)); },
     undo() {
-      const doc = this.past.pop(); if (!doc) return;
-      this.future.push(copy(this.doc)); doc.revision = this.doc.revision + 1; this.doc = doc;
-      const replacement = [...this.documentReplacements].reverse().find(item => item.toId === this.future.at(-1)?.id && item.fromId === doc.id);
-      if (replacement) {
-        this.templatePackage = replacement.fromPackage ? copy(replacement.fromPackage) : createTemplatePackage({ name: doc.name, worksheets: [{ document: doc }] });
-        this.activeWorksheetId = this.templatePackage.worksheets.find(sheet => sheet.document.id === doc.id)?.worksheetId ?? this.templatePackage.worksheets[0].worksheetId;
-      } else if (this.templatePackage) {
-        const active = this.templatePackage.worksheets.find(sheet => sheet.worksheetId === this.activeWorksheetId);
-        if (active) this.templatePackage = updateWorksheet(this.templatePackage, active.worksheetId, this.doc);
-      }
-      if (this.activeWorksheetId) this.worksheetHistory[this.activeWorksheetId] = { past: this.past, future: this.future };
-      this.selection = { r: 0, c: 0, rows: 1, cols: 1 };
+      this.restoreHistory('undo');
     },
     redo() {
-      const doc = this.future.pop(); if (!doc) return;
-      this.past.push(copy(this.doc)); doc.revision = this.doc.revision + 1; this.doc = doc;
-      const replacement = [...this.documentReplacements].reverse().find(item => item.fromId === this.past.at(-1)?.id && item.toId === doc.id);
+      this.restoreHistory('redo');
+    },
+    restoreHistory(direction: 'undo' | 'redo') {
+      const source = direction === 'undo' ? this.past : this.future, target = direction === 'undo' ? this.future : this.past;
+      const saved = source.at(-1); if (!saved) return;
+      const doc = copy(saved); doc.revision = this.doc.revision + 1;
+      const replacement = replacementHistory.get(toRaw(saved));
+      const changes = fieldHistory.get(toRaw(saved)) ?? [];
+      let template = this.templatePackage ? copy(this.templatePackage) : undefined, worksheetId = this.activeWorksheetId;
       if (replacement) {
-        this.templatePackage = copy(replacement.toPackage);
-        this.activeWorksheetId = this.templatePackage.worksheets.find(sheet => sheet.document.id === doc.id)?.worksheetId ?? this.templatePackage.worksheets[0].worksheetId;
-      } else if (this.templatePackage) {
-        const active = this.templatePackage.worksheets.find(sheet => sheet.worksheetId === this.activeWorksheetId);
-        if (active) this.templatePackage = updateWorksheet(this.templatePackage, active.worksheetId, this.doc);
+        template = direction === 'redo' ? copy(replacement.toPackage) : replacement.fromPackage ? copy(replacement.fromPackage)
+          : createTemplatePackage({ name: doc.name, worksheets: [{ document: doc }] });
+        worksheetId = template.worksheets.find(sheet => sheet.document.id === doc.id)?.worksheetId ?? template.worksheets[0].worksheetId;
+      } else {
+        let fields = stableFields(documentFields(this.doc));
+        for (const change of changes) {
+          const current = fields.find(field => field.path === change.path);
+          if (JSON.stringify(current) !== JSON.stringify(change.after)) throw new Error(`字段 ${change.path} 存在较新修改，不能撤销或重做`);
+          fields = fields.filter(field => field.path !== change.path); if (change.before) fields.push(copy(change.before));
+        }
+        // Keep the present dictionary order for unaffected fields; restored fields use the historical order.
+        const order = [...documentFields(saved).map(field => field.path), ...fields.map(field => field.path)];
+        fields.sort((a, b) => order.indexOf(a.path) - order.indexOf(b.path)); doc.fields = copy(fields);
+        if (template) {
+          template.worksheets.find(sheet => sheet.worksheetId === worksheetId)!.document = copy(doc);
+          synchronizeFields(template, fields);
+          const normalized = template.worksheets.find(sheet => sheet.worksheetId === worksheetId)!.document;
+          doc.cells = copy(normalized.cells);
+          template = updateWorksheet(template, worksheetId, normalized);
+        }
       }
+      ops.validateDocument(doc); if (template) validateTemplatePackage(template);
+      const inverse = copy(this.doc);
+      if (replacement) replacementHistory.set(inverse, replacement);
+      if (changes.length) fieldHistory.set(inverse, changes.map(change => ({ path: change.path, before: change.after, after: change.before })));
+      source.pop(); target.push(inverse); if (target.length > 100) target.shift();
+      this.doc = doc; if (template) this.templatePackage = template; this.activeWorksheetId = worksheetId;
+      if (replacement) this.loadEpoch++;
       if (this.activeWorksheetId) this.worksheetHistory[this.activeWorksheetId] = { past: this.past, future: this.future };
       this.selection = { r: 0, c: 0, rows: 1, cols: 1 };
     },

@@ -97,7 +97,7 @@ npm run project:compare -- --mode snapshot --data-dir var/brickbill-reporting --
 
 ## 套件结构
 
-套件顶层包含 `suiteVersion: 1`、唯一的 `suiteId`、`projectId` 和 `cases`。每个用例指定 `caseId`、`documentType`、`businessKey`、一组 `assertions`；离线用例额外指定相对套件文件的 `sourceSnapshot` 路径。每条断言指向一个 `dataset` 或 `view`：
+套件顶层包含 `suiteVersion: 1` 或 `2`、唯一的 `suiteId`、`projectId` 和 `cases`。v1 保持原有数据、数量和锚点对照语义；v2 增加下述可选图片内容断言。未知版本拒绝。可选 baseline 字段记录基准来源；客户验收须填写 sourceKind=customer、referenceId、approvedBy 和 approvedAt。project:compare 会在报告中保留基准来源，project:acceptance 对 customer 清单拒绝缺少业务批准信息的对照报告。旧套件不含 baseline 时按 unclassified 兼容，但不能用它完成客户项目验收。每个用例指定 `caseId`、`documentType`、`businessKey`、一组 `assertions`；离线用例额外指定相对套件文件的 `sourceSnapshot` 路径。每条断言指向一个 `dataset` 或 `view`：
 
 ```json
 {
@@ -125,3 +125,87 @@ npm run project:compare -- --mode snapshot --data-dir var/brickbill-reporting --
 报告按用例、目标、记录键和字段列出差异。值不一致报告会包含基准值和实际值，因此在线生产对照应将报告写入受控目录；不要将未脱敏的报告提交到仓库。用例只比较显式声明的字段，需覆盖业务要求的全部关键值、结果筛选、数量汇总和排序。
 
 真实项目验收还需录入经业务确认的 BFR/MES 结果，覆盖单页、多页和特殊附页。字段映射、记录粒度、单位、正式结果筛选和关联键必须由真实接口及脱敏样本确认；合成回归通过不能替代这一步。
+
+### v2 图片内容断言
+
+在 `suiteVersion: 2` 的 `generation.xlsx.images[]` 中，可增加 `contentSha256: string[]`。长度必须等于该工作表的 `count`，每项为 64 位小写十六进制 SHA-256；顺序与 ExcelJS 回读的图片位置顺序及 `anchors` 一致。摘要针对每个位置引用的 PNG/JPEG/GIF **编码文件字节**，base64 先解码；不比较资源 ID、ZIP 条目名或整份 XLSX 摘要，也不把视觉相同但编码不同的文件自动认作相同。共享资源的多个位置逐项声明。摘要须来自独立批准的基准，不能从本次被验收输出反向生成。
+
+该断言只在 `project:compare --mode snapshot` 中执行。offline/online 请求图片内容断言会产生失败报告和非零退出；不能只比较数据却报告图片通过。v1 套件夹带 `contentSha256` 会被拒绝，新版继续读取没有该字段的 v1；旧版软件会拒绝 v2，历史报告不会被补认已检查图片内容。
+
+比较报告保留 `reportVersion: 1`，增加来源字段 `suiteVersion` 和 `imageContentChecks: { requested, checked, passed }`，后者记录请求数量、实际读取并计算摘要数量及匹配数量；每个输出比较也含同样计数。旧报告缺少这些字段表示没有该项证据，不能按通过推断。数量或锚点正确、但图片内容错误仍以 `IMAGE_CONTENT_MISMATCH` 失败；缺失/损坏资源以 `IMAGE_CONTENT_INVALID` 失败。两种合法 Excel 锚点 `tl + br`、`tl + ext` 均可比较，无效锚点报告 `IMAGE_ANCHOR_INVALID`。
+
+模板包 v2、文档 v1、图片布局 v1 和部署证据 v2/v3/v4 保持原有版本。本次套件版本只用于独立输出基准，不替代实际 Office/WPS 实印验收。
+
+### 预期业务错误
+
+offline/online 套件可用 expectedError 声明在采集或视图计算阶段应发生的确定性业务拒绝。仅接受 DATA_NOT_FOUND、DUPLICATE_KEY、RELATION_CARDINALITY_ERROR、FIELD_NOT_FOUND、VALUE_TYPE_ERROR、VIEW_INVALID，并可指定数据集/字段/视图位置。源超时、源不可用、配置及网络错误不能声明为预期业务结果；匹配失败也不会吞掉这些运行故障。
+
+```json
+{
+  "caseId": "invalid-required-material-value",
+  "documentType": "qualityCertificate",
+  "businessKey": { "printNo": "QC-001", "productPart": "T" },
+  "sourceSnapshot": "invalid-source.json",
+  "assertions": [],
+  "expectedError": {
+    "code": "VALUE_TYPE_ERROR",
+    "stage": "collect",
+    "context": { "datasetId": "material.lines", "fieldId": "material.length" }
+  }
+}
+```
+
+如果未出现预期错误，或实际错误的阶段、错误码、定位不符，用例失败。expectedError 与正常数据/生成断言互斥。
+
+### 项目验收证据汇总
+
+命令 npm run project:acceptance -- --manifest acceptance/project-a/acceptance.json --output output/project-a-acceptance.json 只汇总已有报告和人工签字记录，不重新采集或生成。版本 1 保持六类证据格式以读取历史清单；版本 2 增加数据/输出分立对照和报告文件哈希，适用于新的客户验收。sourceKind 必须是 customer 或 synthetic：
+
+```json
+{
+  "acceptanceVersion": 1,
+  "acceptanceId": "project-a-pilot",
+  "projectId": "project-a",
+  "sourceKind": "customer",
+  "evidence": [
+    { "kind": "validate", "path": "project-validate.json" },
+    { "kind": "probe", "path": "mes-probe.json" },
+    { "kind": "comparison", "path": "business-comparison.json" },
+    { "kind": "deployment", "path": "restore-smoke.json" },
+    { "kind": "identity", "path": "identity-acceptance.json" },
+    { "kind": "print", "path": "office-print-approval.json" }
+  ]
+}
+```
+
+新客户项目使用版本 2，并为每份证据 JSON 固定 SHA-256。以下哈希为占位值，实际清单必须填写对应文件的真实摘要：
+
+```json
+{
+  "acceptanceVersion": 2,
+  "acceptanceId": "customer-a-pilot",
+  "projectId": "customer-a",
+  "sourceKind": "customer",
+  "evidence": [
+    { "kind": "validate", "path": "project-validate.json", "sha256": "<64位十六进制摘要>" },
+    { "kind": "probe", "path": "mes-probe.json", "sha256": "<64位十六进制摘要>" },
+    { "kind": "data-comparison", "path": "business-data-comparison.json", "sha256": "<64位十六进制摘要>" },
+    { "kind": "output-comparison", "path": "generation-output-comparison.json", "sha256": "<64位十六进制摘要>" },
+    { "kind": "deployment", "path": "deployment-restore.json", "sha256": "<64位十六进制摘要>" },
+    { "kind": "identity", "path": "identity-acceptance.json", "sha256": "<64位十六进制摘要>" },
+    { "kind": "print", "path": "office-print-approval.json", "sha256": "<64位十六进制摘要>" }
+  ]
+}
+```
+
+文件路径相对清单所在目录。版本 1 客户清单仍可读取历史 `comparison` 证据，但由于不能证明生成快照/XLSX 对照，会标为 `pending`，补齐后升级到版本 2；版本 1 合成清单仍可作为模拟记录读取。版本 2 的七类证据为 `validate`、`probe`、`data-comparison`、`output-comparison`、`deployment`、`identity`、`print`。每个清单条目都要写对应证据 JSON 文件的 SHA-256；汇总时重新计算，不一致即失败。数据对照必须来自 offline/online 报告，输出对照必须来自 snapshot 报告，并且逐条检查 generationId、固定模板版本、页数、XLSX 哈希和比较状态。客户数据对照和输出对照都要带已批准的独立基准，且提供 `sourceKind=customer`、`referenceId`、`approvedBy` 和可解析的 `approvedAt`。
+
+版本 2 的 `print.artifacts` 使用对象记录样张相对路径、样张 SHA-256、generationId、模板 packageId/revision 及对应生成 XLSX 的 SHA-256。汇总器会校验样张字节，并确认这些标识与通过的 output-comparison 同一条记录。部署证据同时记录服务重启结果和恢复到空目录/空卷后的 generationId、页数及 SHA-256；只有重启而没有独立恢复材料时状态为 `pending`。历史版本 1 的字符串样张仍可读，但不能让版本 1 客户清单通过完整验收。
+
+Compose 烟测的 `compose-smoke-result.json` 在未要求 PDF 时使用 `deploymentEvidenceVersion: 3`，记录唯一源/恢复 Compose 项目、备份 SHA-256、恢复目标为空卷、generationId、页数、XLSX SHA-256，以及固定模板、视图、函数定义和资源摘要在恢复前后的对照。要求并验证 PDF 时使用版本 4，另含 `pdfAvailable`、`pdfSha256`、`pdfByteLength` 和对应的 `restorePdfAvailable`、`restorePdfSha256`、`restorePdfByteLength`，PDF 摘要或长度前后不一致时失败。烟测还会在每次重印前后分别下载并比较实际 PDF 文件。单独的 `backup-evidence.json` 仍使用 `backupEvidenceVersion: 1`，验收清单仍使用 `acceptanceVersion: 2`。
+
+历史部署证据 v2/v3 保持原语义可读，不被解释为已验证 PDF；v2 不补认依赖完整性检查。未标版本的历史记录维持既有读取规则，只有重启的记录仍为 `pending`。v3/v4 缺少依赖摘要或前后摘要不一致时失败，v4 还要求 PDF 有效且恢复一致，明确不支持的版本号会失败。T40 没有新增证据版本，也不改变旧格式兼容行为。
+
+版本化部署证据还必须给出相对路径 `backupArchivePath`。汇总器会在部署证据所在目录内流式读取归档并重算 `backupSha256`；归档缺失、哈希不匹配或路径/符号链接越出证据目录都会失败。把部署证据用于 project:acceptance 时，需与归档一起保存到该证据目录。
+
+汇总报告记录检查时的 Git HEAD、工作区是否有改动以及每份证据的 SHA-256，不复制源样本、令牌或报告正文。合成证据最多标为 `simulation-only`；证据缺失为 `pending`，错误证据为 `failed`，只有客户版所需证据齐备才可汇总为 `passed`。汇总器检查证据结构、内容关联和状态声明；它不替代业务审核，也不执行真实 MES、Docker 恢复或 Office/WPS 打印。
